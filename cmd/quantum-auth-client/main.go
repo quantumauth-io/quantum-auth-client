@@ -2,6 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Madeindreams/quantum-auth-client/internal/config"
 	clienthttp "github.com/Madeindreams/quantum-auth-client/internal/http"
@@ -18,52 +24,80 @@ var (
 )
 
 func main() {
-	log.Info("quantum-auth-client:", "version", Version, "commit", Commit, "build date", BuildDate)
+	log.Info("quantum-auth-client",
+		"version", Version,
+		"commit", Commit,
+		"build_date", BuildDate,
+	)
 
-	ctx := context.Background()
+	// root ctx with cancel on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// 1) load env config
 	cfg, err := config.Load()
 	if err != nil {
 		log.Error("failed to load config", "error", err)
+		return
 	}
 
-	// OS-aware TPM init
+	// 2) OS-aware TPM init
 	tpmClient, err := clienttpm.NewRuntimeTPM(ctx)
 	if err != nil {
-		log.Error("TPM init failed:", "error", err)
+		log.Error("TPM init failed", "error", err)
+		return
 	}
 	defer func(tpmClient tpmdevice.Client) {
-		err := tpmClient.Close()
-		if err != nil {
-			log.Error("TPM close failed:", "error", err)
+		if err := tpmClient.Close(); err != nil {
+			log.Error("TPM close failed", "error", err)
 		}
 	}(tpmClient)
 
 	// 3) init QA client with baseURL + TPM
 	qaClient, err := qa.NewClient(ctx, cfg.ServerURL, tpmClient)
 	if err != nil {
-		log.Error("failed to init QA client:", "error", err)
+		log.Error("failed to init QA client", "error", err)
+		return
 	}
-	defer qaClient.Close()
-	if err != nil {
-		log.Error("failed to init QA client:", "error", err)
-	}
-	defer func(qaClient *qa.Client) {
-		err = qaClient.Close()
-		if err != nil {
-			log.Error("failed to close QA client:", "error", err)
-
+	defer func() {
+		if err := qaClient.Close(); err != nil {
+			log.Error("failed to close QA client", "error", err)
 		}
-	}(qaClient)
+	}()
 
+	// 4) HTTP router + server
 	h := clienthttp.NewHandler(qaClient)
 	r := clienthttp.NewRouter(h)
 
 	addr := ":8090"
-	log.Info("quantum-auth-client listening on", "address", addr, "server", cfg.ServerURL)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: r,
+	}
 
-	if err = r.Run(addr); err != nil {
-		log.Error("failed to run router:", "error", err)
+	log.Info("quantum-auth-client listening",
+		"address", addr,
+		"server", cfg.ServerURL,
+	)
+
+	// 5) run server in goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("HTTP server error", "error", err)
+		}
+	}()
+
+	// 6) wait for signal
+	<-ctx.Done()
+	log.Info("shutdown signal received")
+
+	// 7) graceful shutdown with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Error("HTTP server shutdown failed", "error", err)
+	} else {
+		log.Info("HTTP server gracefully stopped")
 	}
 }
