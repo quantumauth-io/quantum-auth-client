@@ -1,0 +1,47 @@
+version: 2
+
+project_name: quantum-auth-client
+
+builds:
+  - id: quantum-auth-client
+    main: ./cmd/quantum-auth-client/main.go
+    binary: quantum-auth-client
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    ids:
+      - quantum-auth-client
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums_{{ .ProjectName }}_{{ .Version }}.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: desc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
