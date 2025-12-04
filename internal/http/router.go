@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"net/http"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -12,10 +13,14 @@ var uiIndexHTML []byte
 
 func NewRouter(h *Handler) *gin.Engine {
 	r := gin.Default()
-	err := r.SetTrustedProxies([]string{})
-	if err != nil {
-		return nil
-	}
+
+	// TODO improve cors so that apps can talk with the client from the local browser
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 
 	api := r.Group("/api")
 	{

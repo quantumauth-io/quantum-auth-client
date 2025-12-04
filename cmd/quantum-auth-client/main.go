@@ -11,6 +11,7 @@ import (
 
 	"github.com/Madeindreams/quantum-auth-client/internal/config"
 	clienthttp "github.com/Madeindreams/quantum-auth-client/internal/http"
+	"github.com/Madeindreams/quantum-auth-client/internal/login"
 	"github.com/Madeindreams/quantum-auth-client/internal/qa"
 	clienttpm "github.com/Madeindreams/quantum-auth-client/internal/tpm"
 	"github.com/Madeindreams/quantum-auth/pkg/tpmdevice"
@@ -30,43 +31,47 @@ func main() {
 		"build_date", BuildDate,
 	)
 
-	// root ctx with cancel on SIGINT/SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 1) load env config
 	cfg, err := config.Load()
 	if err != nil {
 		log.Error("failed to load config", "error", err)
 		return
 	}
 
-	// 2) OS-aware TPM init
+	// OS-aware TPM init
 	tpmClient, err := clienttpm.NewRuntimeTPM(ctx)
 	if err != nil {
 		log.Error("TPM init failed", "error", err)
 		return
 	}
 	defer func(tpmClient tpmdevice.Client) {
-		if err := tpmClient.Close(); err != nil {
+		if err = tpmClient.Close(); err != nil {
 			log.Error("TPM close failed", "error", err)
 		}
 	}(tpmClient)
 
-	// 3) init QA client with baseURL + TPM
 	qaClient, err := qa.NewClient(ctx, cfg.ServerURL, tpmClient)
 	if err != nil {
 		log.Error("failed to init QA client", "error", err)
 		return
 	}
+
+	authState, err := login.EnsureLogin(ctx, qaClient, cfg.Email, cfg.DeviceLabel)
+	if err != nil {
+		log.Error("login/setup failed", "error", err)
+		return
+	}
+	defer authState.Clear()
+
 	defer func() {
-		if err := qaClient.Close(); err != nil {
+		if err = qaClient.Close(); err != nil {
 			log.Error("failed to close QA client", "error", err)
 		}
 	}()
 
-	// 4) HTTP router + server
-	h := clienthttp.NewHandler(qaClient)
+	h := clienthttp.NewHandler(qaClient, authState)
 	r := clienthttp.NewRouter(h)
 
 	addr := ":8090"
@@ -80,22 +85,19 @@ func main() {
 		"server", cfg.ServerURL,
 	)
 
-	// 5) run server in goroutine
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("HTTP server error", "error", err)
 		}
 	}()
 
-	// 6) wait for signal
 	<-ctx.Done()
 	log.Info("shutdown signal received")
 
-	// 7) graceful shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err = server.Shutdown(shutdownCtx); err != nil {
 		log.Error("HTTP server shutdown failed", "error", err)
 	} else {
 		log.Info("HTTP server gracefully stopped")

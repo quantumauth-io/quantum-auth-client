@@ -33,7 +33,7 @@ func init() {
 
 type Client struct {
 	httpClient *http.Client
-	baseURL    string
+	BaseURL    string
 
 	tpm tpmdevice.Client
 	pk  sign.PublicKey
@@ -70,7 +70,7 @@ func NewClient(ctx context.Context, baseURL string, tpmClient tpmdevice.Client) 
 	return &Client{
 		httpClient: httpClient,
 		tpm:        tpmClient,
-		baseURL:    baseURL,
+		BaseURL:    baseURL,
 		pk:         pk,
 		sk:         sk,
 		tpmPubB64:  tpmPub,
@@ -93,7 +93,7 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 	reqBody := registerUserRequest{Email: email, Password: password, UserName: username}
 	b, _ := json.Marshal(reqBody)
 
-	url := c.baseURL + "/users/register"
+	url := c.BaseURL + "/users/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return "", err
@@ -111,7 +111,7 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 
 	if resp.StatusCode == http.StatusCreated {
 		var out registerUserResponse
-		if err := json.Unmarshal(bodyBytes, &out); err != nil {
+		if err = json.Unmarshal(bodyBytes, &out); err != nil {
 			return "", fmt.Errorf("decode registerUser response: %w", err)
 		}
 		return out.UserID, nil
@@ -130,7 +130,7 @@ func (c *Client) RegisterDevice(ctx context.Context, userID, label string) (stri
 	}
 	b, _ := json.Marshal(reqBody)
 
-	url := c.baseURL + "/devices/register"
+	url := c.BaseURL + "/devices/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return "", err
@@ -149,7 +149,7 @@ func (c *Client) RegisterDevice(ctx context.Context, userID, label string) (stri
 	}
 
 	var out registerDeviceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", err
 	}
 	return out.DeviceID, nil
@@ -160,7 +160,7 @@ func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string,
 	reqBody := authChallengeRequest{DeviceID: deviceID}
 	b, _ := json.Marshal(reqBody)
 
-	url := c.baseURL + "/auth/challenge"
+	url := c.BaseURL + "/auth/challenge"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return "", 0, err
@@ -179,7 +179,7 @@ func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string,
 	}
 
 	var out authChallengeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", 0, err
 	}
 	return out.ChallengeID, out.Nonce, nil
@@ -241,7 +241,7 @@ func (c *Client) verifyAuth(
 	}
 	b, _ := json.Marshal(reqBody)
 
-	url := c.baseURL + "/auth/verify"
+	url := c.BaseURL + "/auth/verify"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return false, "", err
@@ -275,14 +275,9 @@ func (c *Client) verifyAuth(
 
 // SignRequest builds QuantumAuth headers for an arbitrary request.
 func (c *Client) SignRequest(
-	method, path, host, userID, deviceID string,
+	method string, path string, host string, nonce int64, userID, deviceID string,
 	body []byte,
 ) (map[string]string, error) {
-
-	nonceStr, err := qacrypto.RandomBase64(16)
-	if err != nil {
-		return nil, fmt.Errorf("nonce generation failed: %w", err)
-	}
 
 	ts := time.Now().Unix()
 
@@ -291,7 +286,7 @@ func (c *Client) SignRequest(
 		Path:     path,
 		Host:     host,
 		TS:       ts,
-		Nonce:    nonceStr,
+		Nonce:    nonce,
 		UserID:   userID,
 		DeviceID: deviceID,
 		Body:     body,
@@ -315,6 +310,7 @@ func (c *Client) SignRequest(
 			`QuantumAuth user="%s", device="%s", ts="%d", nonce="%s", sig_tpm="%s", sig_pq="%s"`,
 			userID, deviceID, ts, nonceStr, tpmSig, pqSig,
 		),
+		"X-QuantumAuth-Canonical": canonical,
 	}
 
 	return headers, nil
@@ -323,14 +319,14 @@ func (c *Client) SignRequest(
 // SecurePing calls the upstream /api/secure-ping using signed headers.
 func (c *Client) SecurePing(ctx context.Context, userID, deviceID string) (int, string, error) {
 	path := "/api/secure-ping"
-	host := hostOnly(c.baseURL)
+	host := hostOnly(c.BaseURL)
 
 	headers, err := c.SignRequest(http.MethodGet, path, host, userID, deviceID, nil)
 	if err != nil {
 		return 0, "", err
 	}
 
-	url := c.baseURL + path
+	url := c.BaseURL + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, "", err
@@ -347,6 +343,112 @@ func (c *Client) SecurePing(ctx context.Context, userID, deviceID string) (int, 
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(bodyBytes), nil
+}
+
+// FullLogin performs a one-shot full authentication against the QA server.
+// It proves: password + TPM key + PQ key for the given user/device.
+func (c *Client) FullLogin(ctx context.Context, userID, deviceID, password string) error {
+	// message bound to this user/device & purpose
+	msg := struct {
+		UserID   string `json:"user_id"`
+		DeviceID string `json:"device_id"`
+		Purpose  string `json:"purpose"`
+		TS       int64  `json:"ts"`
+	}{
+		UserID:   userID,
+		DeviceID: deviceID,
+		Purpose:  "client-login",
+		TS:       time.Now().Unix(),
+	}
+
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("fullLogin: marshal message: %w", err)
+	}
+
+	// PQ sign
+	pqSigBytes := pqScheme.Sign(c.sk, msgBytes, nil)
+	if pqSigBytes == nil {
+		return fmt.Errorf("fullLogin: PQ sign failed")
+	}
+	pqSigB64 := base64.RawStdEncoding.EncodeToString(pqSigBytes)
+
+	// TPM sign
+	tpmSigB64, err := c.tpm.SignB64(msgBytes)
+	if err != nil {
+		return fmt.Errorf("fullLogin: TPM sign failed: %w", err)
+	}
+
+	reqBody := fullLoginRequest{
+		UserID:       userID,
+		DeviceID:     deviceID,
+		Password:     password,
+		Message:      string(msgBytes),
+		TPMSignature: tpmSigB64,
+		PQSignature:  pqSigB64,
+	}
+	b, _ := json.Marshal(reqBody)
+
+	// adjust path if you want a different route name
+	url := c.BaseURL + "/auth/full-login"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("fullLogin: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fullLogin: do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fullLogin: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// ExportPQKeys returns the PQ public key (already in base64 in the client)
+// and the PQ private key in base64, suitable for storing in the creds file.
+func (c *Client) ExportPQKeys() (pubB64, privB64 string, err error) {
+	skBytes, err := c.sk.MarshalBinary()
+	if err != nil {
+		return "", "", fmt.Errorf("PQ private key marshal failed: %w", err)
+	}
+	privB64 = base64.RawStdEncoding.EncodeToString(skBytes)
+	return c.pqPubB64, privB64, nil
+}
+
+// LoadPQKeys replaces the current PQ keypair in the client with the given pair.
+func (c *Client) LoadPQKeys(pubB64, privB64 string) error {
+	pubBytes, err := base64.RawStdEncoding.DecodeString(pubB64)
+	if err != nil {
+		return fmt.Errorf("decode PQ pub key: %w", err)
+	}
+	privBytes, err := base64.RawStdEncoding.DecodeString(privB64)
+	if err != nil {
+		return fmt.Errorf("decode PQ priv key: %w", err)
+	}
+
+	pk, err := pqScheme.UnmarshalBinaryPublicKey(pubBytes)
+	if err != nil {
+		return fmt.Errorf("unmarshal PQ pub key: %w", err)
+	}
+	sk, err := pqScheme.UnmarshalBinaryPrivateKey(privBytes)
+	if err != nil {
+		return fmt.Errorf("unmarshal PQ priv key: %w", err)
+	}
+
+	c.pk = pk
+	c.sk = sk
+	c.pqPubB64 = pubB64
+
+	return nil
 }
 
 // ===== helpers =====

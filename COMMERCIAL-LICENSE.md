@@ -25,5 +25,5 @@ Commercial license includes:
 Contact for pricing or partnership opportunities:
 [insert business email]
 
-QuantumAuth is a trademark of Ian Decentralize (Madeindreams).  
+QuantumAuth is a trademark of Ian Dorion (Madeindreams).  
 Unauthorized commercial use is prohibited.

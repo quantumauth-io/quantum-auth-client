@@ -25,7 +25,7 @@ func getEnv(key, def string) string {
 
 func Load() (*Config, error) {
 	return &Config{
-		ServerURL:   getEnv("QA_SERVER_URL", "http://localhost:1042"),
+		ServerURL:   getEnv("QA_SERVER_URL", "http://localhost:1042/quantum-auth/v1"),
 		DeviceLabel: getEnv("QA_DEVICE_LABEL", "default-device"),
 		Email:       getEnv("Q_AEMAIL", ""),
 		Password:    getEnv("QA_PASSWORD", ""),

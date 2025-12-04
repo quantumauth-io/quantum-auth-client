@@ -58,3 +58,12 @@ type authVerifyResponse struct {
 	Authenticated bool   `json:"authenticated"`
 	UserID        string `json:"user_id"`
 }
+
+type fullLoginRequest struct {
+	UserID       string `json:"user_id"`
+	DeviceID     string `json:"device_id"`
+	Password     string `json:"password"`
+	Message      string `json:"message"`
+	TPMSignature string `json:"tpm_signature"`
+	PQSignature  string `json:"pq_signature"`
+}

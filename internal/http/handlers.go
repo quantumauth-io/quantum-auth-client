@@ -3,17 +3,21 @@ package http
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-
+	"github.com/Madeindreams/quantum-auth-client/internal/login"
 	"github.com/Madeindreams/quantum-auth-client/internal/qa"
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	client *qa.Client
+	client    *qa.Client
+	authState *login.State
 }
 
-func NewHandler(client *qa.Client) *Handler {
-	return &Handler{client: client}
+func NewHandler(client *qa.Client, auth *login.State) *Handler {
+	return &Handler{
+		client:    client,
+		authState: auth,
+	}
 }
 
 // -------- DTOs for local client API --------
@@ -37,14 +41,19 @@ type registerDeviceRes struct {
 	DeviceID string `json:"device_id"`
 }
 
-type challengeReq struct {
-	DeviceID string `json:"device_id" binding:"required"`
+type qaChallengeRequest struct {
+	Method      string `json:"method"      binding:"required"`
+	Path        string `json:"path"        binding:"required"`
+	BackendHost string `json:"backend_host" binding:"required"`
 }
 
-type challengeRes struct {
-	ChallengeID string `json:"challenge_id"`
-	Nonce       int64  `json:"nonce"`
-	ExpiresAt   string `json:"expires_at"`
+// response sent back to the web SDK
+type qaChallengeResponse struct {
+	ChallengeID string            `json:"challenge_id"`
+	Nonce       int64             `json:"nonce"`
+	Headers     map[string]string `json:"headers"` // reserved for future QA headers
+	UserID      string            `json:"user_id"`
+	DeviceID    string            `json:"device_id"`
 }
 
 type verifyReq struct {
@@ -104,24 +113,47 @@ func (h *Handler) RegisterDevice(c *gin.Context) {
 
 // POST /api/auth/challenge
 func (h *Handler) AuthChallenge(c *gin.Context) {
-	var req challengeReq
+	if h.authState == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth state not initialised"})
+		return
+	}
+
+	var req qaChallengeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	chID, nonce, err := h.client.RequestChallenge(c.Request.Context(), req.DeviceID)
+	// Ask the QA server for a challenge for THIS device
+	chID, nonce, err := h.client.RequestChallenge(c.Request.Context(), h.authState.DeviceID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	// 2) build QuantumAuth signing headers for the *backend* request
+	signedHeaders, err := h.client.SignRequest(
+		req.Method,
+		req.Path,
+		req.BackendHost,
+		nonce,
+		h.authState.UserID,
+		h.authState.DeviceID,
+		nil, // body; keep nil for now (we're not binding to body yet)
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	// the upstream response also has ExpiresAt; we don't expose it yet
-	c.JSON(http.StatusCreated, challengeRes{
+	resp := qaChallengeResponse{
 		ChallengeID: chID,
 		Nonce:       nonce,
-		ExpiresAt:   "", // TODO: plumb through if needed
-	})
+		Headers:     signedHeaders, // placeholder for future canonical headers
+		UserID:      h.authState.UserID,
+		DeviceID:    h.authState.DeviceID,
+	}
+
+	c.JSON(http.StatusCreated, resp)
 }
 
 // POST /api/auth/verify
