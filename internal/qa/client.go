@@ -15,7 +15,6 @@ import (
 	"github.com/cloudflare/circl/sign"
 	"github.com/cloudflare/circl/sign/schemes"
 
-	qacrypto "github.com/Madeindreams/quantum-auth/pkg/qa/crypto"
 	qareq "github.com/Madeindreams/quantum-auth/pkg/qa/requests"
 	"github.com/Madeindreams/quantum-auth/pkg/tpmdevice"
 )
@@ -292,25 +291,30 @@ func (c *Client) SignRequest(
 		Body:     body,
 	})
 
+	msg := []byte(canonical)
+
 	// TPM sign
-	tpmSig, err := c.tpm.SignB64([]byte(canonical))
+	tpmSig, err := c.tpm.SignB64(msg)
 	if err != nil {
 		return nil, fmt.Errorf("tpm sign: %w", err)
 	}
 
 	// PQ sign
-	sigBytes := pqScheme.Sign(c.sk, []byte(canonical), nil)
+	sigBytes := pqScheme.Sign(c.sk, msg, nil)
 	if sigBytes == nil {
 		return nil, fmt.Errorf("pq sign failed")
 	}
 	pqSig := base64.RawStdEncoding.EncodeToString(sigBytes)
 
+	// base64 canonical so it is safe as a single-line header
+	canonicalB64 := base64.StdEncoding.EncodeToString(msg)
+
 	headers := map[string]string{
 		"Authorization": fmt.Sprintf(
-			`QuantumAuth user="%s", device="%s", ts="%d", nonce="%s", sig_tpm="%s", sig_pq="%s"`,
-			userID, deviceID, ts, nonceStr, tpmSig, pqSig,
+			`QuantumAuth user="%s", device="%s", ts="%d", nonce="%d", sig_tpm="%s", sig_pq="%s"`,
+			userID, deviceID, ts, nonce, tpmSig, pqSig,
 		),
-		"X-QuantumAuth-Canonical": canonical,
+		"X-QuantumAuth-Canonical-B64": canonicalB64,
 	}
 
 	return headers, nil
@@ -319,21 +323,21 @@ func (c *Client) SignRequest(
 // SecurePing calls the upstream /api/secure-ping using signed headers.
 func (c *Client) SecurePing(ctx context.Context, userID, deviceID string) (int, string, error) {
 	path := "/api/secure-ping"
-	host := hostOnly(c.BaseURL)
+	// host := hostOnly(c.BaseURL)
 
-	headers, err := c.SignRequest(http.MethodGet, path, host, userID, deviceID, nil)
-	if err != nil {
-		return 0, "", err
-	}
+	//headers, err := c.SignRequest(http.MethodGet, path, host, userID, deviceID, nil)
+	//if err != nil {
+	//	return 0, "", err
+	//}
 
 	url := c.BaseURL + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, "", err
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
+	//for k, v := range headers {
+	//	req.Header.Set(k, v)
+	//}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
