@@ -64,12 +64,6 @@ func EnsureLogin(
 		return nil, fmt.Errorf("parse creds file %s: %w", path, err)
 	}
 
-	log.Info("loaded QuantumAuth identity",
-		"user_id", truncate(fd.UserID),
-		"device_id", truncate(fd.DeviceID),
-		"path", path,
-	)
-
 	// NEW: restore PQ keys into the client so signatures match what server has
 	if fd.PQPubKeyB64 != "" && fd.PQPrivKeyB64 != "" {
 		if err := qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {

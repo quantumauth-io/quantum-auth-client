@@ -7,16 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/cloudflare/circl/sign"
-	"github.com/cloudflare/circl/sign/schemes"
-
 	qareq "github.com/Madeindreams/quantum-auth/pkg/qa/requests"
 	"github.com/Madeindreams/quantum-auth/pkg/tpmdevice"
+	"github.com/Madeindreams/quantum-go-utils/log"
+	"github.com/cloudflare/circl/sign"
+	"github.com/cloudflare/circl/sign/schemes"
 )
 
 // ===== PQ scheme =====
@@ -51,7 +50,6 @@ func NewClient(ctx context.Context, baseURL string, tpmClient tpmdevice.Client) 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	tpmPub := tpmClient.PublicKeyB64()
-	log.Println("TPM public key (b64, trunc):", truncate(tpmPub))
 
 	pk, sk, err := pqScheme.GenerateKey()
 	if err != nil {
@@ -64,7 +62,6 @@ func NewClient(ctx context.Context, baseURL string, tpmClient tpmdevice.Client) 
 		return nil, fmt.Errorf("PQ pub marshal failed: %w", err)
 	}
 	pqPub := base64.RawStdEncoding.EncodeToString(pqPubBytes)
-	log.Println("PQ public key (b64, trunc):", truncate(pqPub))
 
 	return &Client{
 		httpClient: httpClient,
@@ -106,7 +103,7 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Println("RegisterUser raw body:", string(bodyBytes))
+	log.Info("RegisterUser raw body:", "body", string(bodyBytes))
 
 	if resp.StatusCode == http.StatusCreated {
 		var out registerUserResponse
@@ -387,7 +384,7 @@ func (c *Client) FullLogin(ctx context.Context, userID, deviceID, password strin
 		UserID:       userID,
 		DeviceID:     deviceID,
 		Password:     password,
-		Message:      string(msgBytes),
+		MessageB64:   base64.StdEncoding.EncodeToString(msgBytes),
 		TPMSignature: tpmSigB64,
 		PQSignature:  pqSigB64,
 	}
