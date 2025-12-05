@@ -49,11 +49,7 @@ type qaChallengeRequest struct {
 
 // response sent back to the web SDK
 type qaChallengeResponse struct {
-	ChallengeID string            `json:"challenge_id"`
-	Nonce       int64             `json:"nonce"`
-	Headers     map[string]string `json:"headers"` // reserved for future QA headers
-	UserID      string            `json:"user_id"`
-	DeviceID    string            `json:"device_id"`
+	Headers map[string]string `json:"headers"`
 }
 
 type verifyReq struct {
@@ -111,8 +107,8 @@ func (h *Handler) RegisterDevice(c *gin.Context) {
 	c.JSON(http.StatusCreated, registerDeviceRes{DeviceID: deviceID})
 }
 
-// POST /api/auth/challenge
-func (h *Handler) AuthChallenge(c *gin.Context) {
+// POST /api/auth/authenticate
+func (h *Handler) Authenticate(c *gin.Context) {
 	if h.authState == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth state not initialised"})
 		return
@@ -125,7 +121,7 @@ func (h *Handler) AuthChallenge(c *gin.Context) {
 	}
 
 	// Ask the QA server for a challenge for THIS device
-	chID, nonce, err := h.client.RequestChallenge(c.Request.Context(), h.authState.DeviceID)
+	chID, err := h.client.RequestChallenge(c.Request.Context(), h.authState.DeviceID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -135,9 +131,9 @@ func (h *Handler) AuthChallenge(c *gin.Context) {
 		req.Method,
 		req.Path,
 		req.BackendHost,
-		nonce,
 		h.authState.UserID,
 		h.authState.DeviceID,
+		chID,
 		nil, // body; keep nil for now (we're not binding to body yet)
 	)
 	if err != nil {
@@ -146,11 +142,7 @@ func (h *Handler) AuthChallenge(c *gin.Context) {
 	}
 
 	resp := qaChallengeResponse{
-		ChallengeID: chID,
-		Nonce:       nonce,
-		Headers:     signedHeaders, // placeholder for future canonical headers
-		UserID:      h.authState.UserID,
-		DeviceID:    h.authState.DeviceID,
+		Headers: signedHeaders,
 	}
 
 	c.JSON(http.StatusCreated, resp)

@@ -152,33 +152,33 @@ func (c *Client) RegisterDevice(ctx context.Context, userID, label string) (stri
 }
 
 // RequestChallenge wraps POST /auth/challenge.
-func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string, int64, error) {
+func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string, error) {
 	reqBody := authChallengeRequest{DeviceID: deviceID}
 	b, _ := json.Marshal(reqBody)
 
 	url := c.BaseURL + "/auth/challenge"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", 0, fmt.Errorf("requestChallenge: status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("requestChallenge: status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var out authChallengeResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", 0, err
+		return "", err
 	}
-	return out.ChallengeID, out.Nonce, nil
+	return out.ChallengeID, nil
 }
 
 // BuildSignedMessage creates the JSON message used for challenge signatures.
@@ -271,21 +271,21 @@ func (c *Client) verifyAuth(
 
 // SignRequest builds QuantumAuth headers for an arbitrary request.
 func (c *Client) SignRequest(
-	method string, path string, host string, nonce int64, userID, deviceID string,
+	method string, path string, host string, userID, deviceID, challengeId string,
 	body []byte,
 ) (map[string]string, error) {
 
 	ts := time.Now().Unix()
 
 	canonical := qareq.CanonicalString(qareq.CanonicalInput{
-		Method:   method,
-		Path:     path,
-		Host:     host,
-		TS:       ts,
-		Nonce:    nonce,
-		UserID:   userID,
-		DeviceID: deviceID,
-		Body:     body,
+		Method:      method,
+		Path:        path,
+		Host:        host,
+		TS:          ts,
+		ChallengeID: challengeId,
+		UserID:      userID,
+		DeviceID:    deviceID,
+		Body:        body,
 	})
 
 	msg := []byte(canonical)
@@ -308,8 +308,8 @@ func (c *Client) SignRequest(
 
 	headers := map[string]string{
 		"Authorization": fmt.Sprintf(
-			`QuantumAuth user="%s", device="%s", ts="%d", nonce="%d", sig_tpm="%s", sig_pq="%s"`,
-			userID, deviceID, ts, nonce, tpmSig, pqSig,
+			`QuantumAuth sig_tpm="%s", sig_pq="%s"`,
+			tpmSig, pqSig,
 		),
 		"X-QuantumAuth-Canonical-B64": canonicalB64,
 	}

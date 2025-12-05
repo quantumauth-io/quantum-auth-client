@@ -55,8 +55,8 @@ func NewRouter(h *Handler) *gin.Engine {
 		api.POST("/users/register", h.RegisterUser)
 		api.POST("/devices/register", h.RegisterDevice)
 
-		api.POST("/auth/challenge", h.AuthChallenge)
-		api.POST("/auth/verify", h.AuthVerify)
+		api.POST("/qa/authenticate", h.Authenticate)
+		api.POST("/qa/verify", h.AuthVerify)
 
 		api.GET("/secure-ping", h.SecurePing)
 	}
