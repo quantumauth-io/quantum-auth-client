@@ -6,16 +6,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/Madeindreams/quantum-auth-client/internal/config"
-	clienthttp "github.com/Madeindreams/quantum-auth-client/internal/http"
-	"github.com/Madeindreams/quantum-auth-client/internal/login"
-	"github.com/Madeindreams/quantum-auth-client/internal/qa"
-	clienttpm "github.com/Madeindreams/quantum-auth-client/internal/tpm"
-	"github.com/Madeindreams/quantum-auth/pkg/tpmdevice"
-	"github.com/Madeindreams/quantum-go-utils/log"
+	"github.com/quantumauth-io/quantum-auth-client/internal/config"
+	clienthttp "github.com/quantumauth-io/quantum-auth-client/internal/http"
+	"github.com/quantumauth-io/quantum-auth-client/internal/login"
+	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
+	clienttpm "github.com/quantumauth-io/quantum-auth-client/internal/tpm"
+	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
+	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 
 var (
@@ -30,6 +31,14 @@ func main() {
 		"commit", Commit,
 		"build_date", BuildDate,
 	)
+
+	// --- Handle qa:// URL launch (qa://ping, qa://whatever) ---
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "qa://") {
+		urlArg := os.Args[1]
+		log.Info("launched via QA URL: %s", urlArg)
+		// You can parse the URL if you ever want extra behavior, but for now:
+		// just continue normal startup so the local HTTP API comes up.
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -52,11 +61,16 @@ func main() {
 		}
 	}(tpmClient)
 
-	qaClient, err := qa.NewClient(ctx, cfg.ServerURL, tpmClient)
+	qaClient, err := qa.NewClient(cfg.ServerURL, tpmClient)
 	if err != nil {
 		log.Error("failed to init QA client", "error", err)
 		return
 	}
+	defer func() {
+		if err = qaClient.Close(); err != nil {
+			log.Error("failed to close QA client", "error", err)
+		}
+	}()
 
 	authState, err := login.EnsureLogin(ctx, qaClient, cfg.Email, cfg.DeviceLabel)
 	if err != nil {
@@ -65,19 +79,12 @@ func main() {
 	}
 	defer authState.Clear()
 
-	defer func() {
-		if err = qaClient.Close(); err != nil {
-			log.Error("failed to close QA client", "error", err)
-		}
-	}()
+	handler := clienthttp.NewServer(qaClient, authState)
 
-	h := clienthttp.NewHandler(qaClient, authState)
-	r := clienthttp.NewRouter(h)
-
-	addr := ":8090"
+	addr := ":6137"
 	server := &http.Server{
 		Addr:    addr,
-		Handler: r,
+		Handler: handler,
 	}
 
 	log.Info("quantum-auth-client listening",

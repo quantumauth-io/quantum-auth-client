@@ -31,6 +31,8 @@ archives:
     files:
       - LICENSE
       - README.md
+      - install.sh
+      - install.ps1
 
 checksum:
   name_template: "checksums_{{ .ProjectName }}_{{ .Version }}.txt"
@@ -44,3 +46,8 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+
+release:
+  github:
+    owner: quantumauth-io
+    name: quantum-auth-client

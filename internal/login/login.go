@@ -11,8 +11,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Madeindreams/quantum-auth-client/internal/qa"
-	"github.com/Madeindreams/quantum-go-utils/log"
+	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
+	"github.com/quantumauth-io/quantum-go-utils/log"
 	"golang.org/x/term"
 )
 

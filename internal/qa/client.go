@@ -8,17 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	qareq "github.com/Madeindreams/quantum-auth/pkg/qa/requests"
-	"github.com/Madeindreams/quantum-auth/pkg/tpmdevice"
-	"github.com/Madeindreams/quantum-go-utils/log"
 	"github.com/cloudflare/circl/sign"
 	"github.com/cloudflare/circl/sign/schemes"
+	qareq "github.com/quantumauth-io/quantum-auth/pkg/qa/requests"
+	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
+	"github.com/quantumauth-io/quantum-go-utils/log"
 )
-
-// ===== PQ scheme =====
 
 var pqScheme sign.Scheme
 
@@ -39,10 +36,20 @@ type Client struct {
 
 	tpmPubB64 string
 	pqPubB64  string
+
+	userID   string
+	deviceID string
+
+	ctx context.Context
+}
+
+func (c *Client) SetAuthContext(userID, deviceID string) {
+	c.userID = userID
+	c.deviceID = deviceID
 }
 
 // NewClient initialises TPM + PQ keys and an HTTP client.
-func NewClient(ctx context.Context, baseURL string, tpmClient tpmdevice.Client) (*Client, error) {
+func NewClient(baseURL string, tpmClient tpmdevice.Client) (*Client, error) {
 	if tpmClient == nil {
 		return nil, fmt.Errorf("tpm client is nil")
 	}
@@ -317,35 +324,6 @@ func (c *Client) SignRequest(
 	return headers, nil
 }
 
-// SecurePing calls the upstream /api/secure-ping using signed headers.
-func (c *Client) SecurePing(ctx context.Context, userID, deviceID string) (int, string, error) {
-	path := "/api/secure-ping"
-	// host := hostOnly(c.BaseURL)
-
-	//headers, err := c.SignRequest(http.MethodGet, path, host, userID, deviceID, nil)
-	//if err != nil {
-	//	return 0, "", err
-	//}
-
-	url := c.BaseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, "", err
-	}
-	//for k, v := range headers {
-	//	req.Header.Set(k, v)
-	//}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(bodyBytes), nil
-}
-
 // FullLogin performs a one-shot full authentication against the QA server.
 // It proves: password + TPM key + PQ key for the given user/device.
 func (c *Client) FullLogin(ctx context.Context, userID, deviceID, password string) error {
@@ -450,24 +428,4 @@ func (c *Client) LoadPQKeys(pubB64, privB64 string) error {
 	c.pqPubB64 = pubB64
 
 	return nil
-}
-
-// ===== helpers =====
-
-func truncate(s string) string {
-	if len(s) <= 32 {
-		return s
-	}
-	return s[:32] + "..."
-}
-
-func hostOnly(baseURL string) string {
-	// Very small helper to extract host:port from http://host:port/...
-	// Good enough for local dev; feel free to improve with net/url.
-	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		return baseURL
-	}
-	withoutScheme := strings.SplitN(baseURL, "://", 2)[1]
-	parts := strings.SplitN(withoutScheme, "/", 2)
-	return parts[0]
 }

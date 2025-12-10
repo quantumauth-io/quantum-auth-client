@@ -5,7 +5,9 @@ quantum auth client
 
 
 
-
+```bash
+sudo go run ./cmd/quantum-auth-client
+```
 
 
 

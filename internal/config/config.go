@@ -5,15 +5,10 @@ import (
 )
 
 type Config struct {
-	// QuantumAuth server base URL, e.g. http://localhost:1042/quantum-auth/v1
-	ServerURL string
-
-	// Optional label for this device, e.g. "nitro-laptop"
+	ServerURL   string
 	DeviceLabel string
-
-	// Optional email/password for bootstrapping a user
-	Email    string
-	Password string
+	Email       string
+	Password    string
 }
 
 func getEnv(key, def string) string {
@@ -27,7 +22,7 @@ func Load() (*Config, error) {
 	return &Config{
 		ServerURL:   getEnv("QA_SERVER_URL", "http://localhost:1042/quantum-auth/v1"),
 		DeviceLabel: getEnv("QA_DEVICE_LABEL", "default-device"),
-		Email:       getEnv("Q_AEMAIL", ""),
+		Email:       getEnv("QA_EMAIL", ""),
 		Password:    getEnv("QA_PASSWORD", ""),
 	}, nil
 }

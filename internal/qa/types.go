@@ -46,6 +46,16 @@ type authChallengeResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+type qaChallengeRequest struct {
+	Method      string `json:"method"      binding:"required"`
+	Path        string `json:"path"        binding:"required"`
+	BackendHost string `json:"backend_host" binding:"required"`
+}
+
+type qaChallengeResponse struct {
+	Headers map[string]string `json:"headers"`
+}
+
 type authVerifyRequest struct {
 	ChallengeID  string `json:"challenge_id"`
 	DeviceID     string `json:"device_id"`
