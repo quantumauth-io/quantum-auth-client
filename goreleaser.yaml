@@ -80,3 +80,17 @@ snapcrafts:
         plugs:
           - network
           - home
+
+scoops:
+  - name: quantum-auth-client
+    homepage: "https://quantumauth.io"
+    description: "QuantumAuth Client - hardware-backed device authentication."
+    license: "Apache-2.0"
+
+    repository:
+      owner: quantumauth-io
+      name: scoop-bucket
+
+    commit_author:
+      name: QuantumAuth Bot
+      email: bot@quantumauth.io
