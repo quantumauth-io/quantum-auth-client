@@ -90,6 +90,7 @@ scoops:
     repository:
       owner: quantumauth-io
       name: scoop-bucket
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
 
     commit_author:
       name: QuantumAuth Bot
