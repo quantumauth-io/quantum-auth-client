@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	clientconfig "github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
 	clienthttp "github.com/quantumauth-io/quantum-auth-client/internal/http"
 	"github.com/quantumauth-io/quantum-auth-client/internal/login"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
 	clienttpm "github.com/quantumauth-io/quantum-auth-client/internal/tpm"
 	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
-	"github.com/quantumauth-io/quantum-go-utils/config"
 	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 
@@ -44,7 +44,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.ParseConfig[qa.Config]([]string{"./config/", "./cmd/quantum-auth-client/config/"})
+	cfg, err := clientconfig.Load()
 	if err != nil {
 		log.Fatal("failed to parse config", "error", err)
 	}

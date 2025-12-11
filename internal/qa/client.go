@@ -26,18 +26,6 @@ func init() {
 	}
 }
 
-type ClientSettings struct {
-	LocalHost   string
-	ServerURL   string
-	Port        string
-	DeviceLabel string
-	Email       string
-}
-
-type Config struct {
-	ClientSettings ClientSettings
-}
-
 type Client struct {
 	httpClient *http.Client
 	BaseURL    string
