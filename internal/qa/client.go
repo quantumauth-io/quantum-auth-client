@@ -26,6 +26,18 @@ func init() {
 	}
 }
 
+type ClientSettings struct {
+	LocalHost   string
+	ServerURL   string
+	Port        string
+	DeviceLabel string
+	Email       string
+}
+
+type Config struct {
+	ClientSettings ClientSettings
+}
+
 type Client struct {
 	httpClient *http.Client
 	BaseURL    string
@@ -53,6 +65,7 @@ func NewClient(baseURL string, tpmClient tpmdevice.Client) (*Client, error) {
 	if tpmClient == nil {
 		return nil, fmt.Errorf("tpm client is nil")
 	}
+	log.Info("Creating new QA client", "baseURL", baseURL)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 

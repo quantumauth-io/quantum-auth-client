@@ -1,0 +1,68 @@
+name: "🐞 Bug Report"
+description: Report something that isn't working as expected
+title: "[BUG] "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🐞 Bug Description
+        Please clearly explain what the bug is.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the problem.
+      placeholder: Describe the unexpected behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 🔁 Reproduction Steps
+      description: How can we reproduce the issue?
+      placeholder: |
+        1.  
+        2.  
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 🧪 Expected Behavior
+      description: What should have happened instead?
+      placeholder: Describe what you expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 🖥 Environment
+      description: Please provide your system details.
+      placeholder: |
+        - QuantumAuth Client version:
+        - OS (Windows / macOS / Linux):
+        - Browser:
+        - TPM or Secure Enclave: Yes/No
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 📄 Logs / Output
+      description: Paste any relevant error messages or console logs.
+      render: bash
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 🧩 Additional Context
+      description: Anything else we should know?

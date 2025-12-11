@@ -1,0 +1,6 @@
+ClientSettings:
+  LocalHost: "0.0.0.0"
+  ServerURL: "https://api.quantumauth.io/quantum-auth/v1"
+  Port: "6137"
+  DeviceLabel: "default-device"
+  Email: ""

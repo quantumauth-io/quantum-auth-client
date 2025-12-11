@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/quantumauth-io/quantum-auth-client/internal/config"
 	clienthttp "github.com/quantumauth-io/quantum-auth-client/internal/http"
 	"github.com/quantumauth-io/quantum-auth-client/internal/login"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
 	clienttpm "github.com/quantumauth-io/quantum-auth-client/internal/tpm"
 	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
+	"github.com/quantumauth-io/quantum-go-utils/config"
 	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 
@@ -43,12 +44,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Load()
+	cfg, err := config.ParseConfig[qa.Config]([]string{"./config/", "./cmd/quantum-auth-client/config/"})
 	if err != nil {
-		log.Error("failed to load config", "error", err)
-		return
+		log.Fatal("failed to parse config", "error", err)
 	}
-
 	// OS-aware TPM init
 	tpmClient, err := clienttpm.NewRuntimeTPM(ctx)
 	if err != nil {
@@ -61,7 +60,7 @@ func main() {
 		}
 	}(tpmClient)
 
-	qaClient, err := qa.NewClient(cfg.ServerURL, tpmClient)
+	qaClient, err := qa.NewClient(cfg.ClientSettings.ServerURL, tpmClient)
 	if err != nil {
 		log.Error("failed to init QA client", "error", err)
 		return
@@ -72,7 +71,7 @@ func main() {
 		}
 	}()
 
-	authState, err := login.EnsureLogin(ctx, qaClient, cfg.Email, cfg.DeviceLabel)
+	authState, err := login.EnsureLogin(ctx, qaClient, cfg.ClientSettings.Email, cfg.ClientSettings.DeviceLabel)
 	if err != nil {
 		log.Error("login/setup failed", "error", err)
 		return
@@ -81,7 +80,7 @@ func main() {
 
 	handler := clienthttp.NewServer(qaClient, authState)
 
-	addr := ":6137"
+	addr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)
 	server := &http.Server{
 		Addr:    addr,
 		Handler: handler,
@@ -89,7 +88,7 @@ func main() {
 
 	log.Info("quantum-auth-client listening",
 		"address", addr,
-		"server", cfg.ServerURL,
+		"server", cfg.ClientSettings.ServerURL,
 	)
 
 	go func() {

@@ -18,6 +18,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.BuildDate={{.Date}}
 
 archives:
   - id: default
@@ -51,3 +54,6 @@ release:
   github:
     owner: quantumauth-io
     name: quantum-auth-client
+
+
+

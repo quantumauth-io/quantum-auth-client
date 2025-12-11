@@ -87,10 +87,12 @@ func EnsureLogin(
 	// verify with server before starting client
 	if err := qaClient.FullLogin(ctx, state.UserID, state.DeviceID, string(state.Password)); err != nil {
 		log.Error("full login failed", "error", err)
+		log.Error("db error", "type", fmt.Sprintf("%T", err), "err", fmt.Sprintf("%+v", err))
 		return nil, err
 	}
 
 	return state, nil
+
 }
 
 // First-time flow: ask for details, register user + device, write file, return state.

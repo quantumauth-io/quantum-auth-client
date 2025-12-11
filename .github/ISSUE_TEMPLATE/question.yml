@@ -1,0 +1,23 @@
+---
+name: "❓ Question / Help"
+about: Ask a question about using QuantumAuth
+title: ""
+labels: ["question"]
+assignees: []
+---
+
+## ❓ What is your question?
+  Write your question here.
+  
+  ## 📦 Context
+  Which SDK are you using?
+- [ ] Node.js
+- [ ] Web (Browser)
+- [ ] Go
+- [ ] CLI
+
+Version:
+Platform (OS / browser):
+
+## 💬 Additional details
+  Add any screenshots, code snippets, or explanations that help clarify the question.

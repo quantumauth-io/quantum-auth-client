@@ -130,13 +130,14 @@ func (s *Server) handleRequestChallenge(
 
 	chID, err := s.qaClient.RequestChallenge(ctx, s.authState.DeviceID)
 	if err != nil {
+		log.Error("Failed to request challenge", "error", err)
 		writeJSON(w, http.StatusBadGateway, extensionResponse{
 			OK:    false,
 			Error: err.Error(),
 		})
 		return
 	}
-
+	log.Info("challenge", "id", chID)
 	signedHeaders, err := s.qaClient.SignRequest(
 		req.Method,
 		req.Path,
