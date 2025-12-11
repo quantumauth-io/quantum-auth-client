@@ -24,24 +24,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25.4'
 
       - name: Install snapcraft
         run: |
           sudo snap install snapcraft --classic
 
-      - name: Login to Snap Store
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          echo "$SNAPCRAFT_STORE_CREDENTIALS" > snapcraft.login
-          snapcraft login --with snapcraft.login
-
-
-      - name: Set up GoReleaser
+      - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
           version: latest
           args: >
