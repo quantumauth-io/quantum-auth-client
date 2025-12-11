@@ -80,6 +80,14 @@ snapcrafts:
           - network
           - home
           - tpm
+          - quantumauth-config
+    plugs:
+      quantumauth-config:
+        interface: personal-files
+        read:
+          - $HOME/.config/quantumauth
+        write:
+          - $HOME/.config/quantumauth
 
 scoops:
   - name: quantum-auth-client
