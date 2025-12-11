@@ -55,5 +55,28 @@ release:
     owner: quantumauth-io
     name: quantum-auth-client
 
+snapcrafts:
+  - id: quantum-auth-client-snap
+    name: quantum-auth-client
+    title: QuantumAuth Client
+    summary: "QuantumAuth Client - hardware-backed device authentication"
+    description: |
+      The QuantumAuth Client is a lightweight local agent that manages
+      hardware-backed device identity using TPM or secure enclaves. It
+      signs authentication requests for QuantumAuth-enabled applications.
+    publish: true
+    license: Apache-2.0
+    grade: stable
+    confinement: strict
+    base: core22
 
+    # use the existing GoReleaser build with this id
+    builds:
+      - quantum-auth-client
 
+    apps:
+      quantum-auth-client:
+        command: quantum-auth-client
+        plugs:
+          - network
+          - home

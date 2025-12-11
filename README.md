@@ -1,12 +1,79 @@
+
+# QuantumAuth Client
 ![Powered by QuantumAuth](https://img.shields.io/badge/Powered%20By-QuantumAuth-1a1a1a?style=for-the-badge&logo=dependabot)
 
-# quantum-auth-client
-quantum auth client
+[![Release](https://img.shields.io/github/v/release/quantumauth-io/quantum-auth-client)](https://github.com/quantumauth-io/quantum-auth-client/releases)
+![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)
+![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen)
+
+The **QuantumAuth Client** is a lightweight, open-source system agent that provides **device-bound authentication** using secure hardware such as **TPM** (with Secure Enclave support coming soon).  
+It runs locally on the user’s device and manages a unique cryptographic identity used to sign requests and authenticate with QuantumAuth-enabled applications.
+
+The client handles:
+
+- Device registration
+- Hardware-backed key generation
+- Local signing of authentication requests
+- Secure communication with the QuantumAuth backend
 
 
+
+### TPM / Secure Hardware Support
+
+- Linux + Windows use TPM 2.0 for hardware-backed keys
+- macOS Secure Enclave support is in development
+- If no secure hardware is available, the client automatically falls back to software keys
+
+## 📦 Installation
+
+### Linux
+
+1. **Download** the latest release archive (`.tar.gz`) from:  
+   https://github.com/quantumauth-io/quantum-auth-client/releases
+
+2. **Extract** the archive:
+
+```sh
+tar -xvf quantum-auth-client_<version>_linux_<arch>.tar.gz
+```
+
+3. **Make the installer executable:**
+
+```sh
+chmod +x install.sh
+```
+
+4. **Run the installer:**
+
+```sh
+./install.sh
+```
+
+5. Start the client:
+
+```sh
+quantum-auth-client run
+```
+
+---
+
+
+## 🛡 Security
+
+Please report vulnerabilities to:
+
+**security@quantumauth.io**
+
+---
+
+## 📄 License
+
+**Apache 2.0**
 
 ```bash
-sudo go run ./cmd/quantum-auth-client
+go run ./cmd/quantum-auth-client
 ```
 
 
