@@ -1,4 +1,3 @@
-// internal/login/login.go
 package login
 
 import (
@@ -33,10 +32,6 @@ type State struct {
 }
 
 // EnsureLogin is called on client startup.
-//
-//   - If the creds file does NOT exist: runs interactive first-time setup
-//     (register user + device) and writes the file.
-//   - If it DOES exist: loads user/device and prompts once for password.
 func EnsureLogin(
 	ctx context.Context,
 	qaClient *qa.Client,
@@ -44,19 +39,36 @@ func EnsureLogin(
 	defaultDeviceLabel string,
 ) (*State, error) {
 
-	path, err := credsFilePath()
+	paths, err := credsFilePathCandidates()
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Info("no QuantumAuth credentials file found, running first-time setup",
-				"path", path)
-			return firstTimeSetup(ctx, qaClient, path, defaultEmail, defaultDeviceLabel)
+	var (
+		path string
+		data []byte
+	)
+
+	// Try all known locations (real HOME first, then legacy)
+	for _, p := range paths {
+		d, err := os.ReadFile(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read creds file %s: %w", p, err)
 		}
-		return nil, fmt.Errorf("read creds file: %w", err)
+		path = p
+		data = d
+		break
+	}
+
+	if path == "" {
+		// No creds anywhere: run first-time setup, writing to primary path
+		primaryPath := paths[0]
+		log.Info("no QuantumAuth credentials file found, running first-time setup",
+			"path", primaryPath)
+		return firstTimeSetup(ctx, qaClient, primaryPath, defaultEmail, defaultDeviceLabel)
 	}
 
 	var fd fileData
@@ -64,7 +76,7 @@ func EnsureLogin(
 		return nil, fmt.Errorf("parse creds file %s: %w", path, err)
 	}
 
-	// NEW: restore PQ keys into the client so signatures match what server has
+	// Restore PQ keys
 	if fd.PQPubKeyB64 != "" && fd.PQPrivKeyB64 != "" {
 		if err := qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {
 			return nil, fmt.Errorf("load PQ keys from creds file: %w", err)
@@ -82,17 +94,14 @@ func EnsureLogin(
 		Password: []byte(pwd),
 	}
 
-	// verify with server before starting client
 	if err := qaClient.FullLogin(ctx, state.UserID, state.DeviceID, string(state.Password)); err != nil {
 		log.Error("full login failed", "error", err)
-
 		return nil, err
 	}
 
 	log.Info("successfully logged in", "user", state.UserID)
 
 	return state, nil
-
 }
 
 // First-time flow: ask for details, register user + device, write file, return state.
@@ -125,7 +134,6 @@ func firstTimeSetup(
 		return nil, fmt.Errorf("register device: %w", err)
 	}
 
-	// NEW: export PQ keys from the QA client so we can reuse them next run
 	pqPubB64, pqPrivB64, err := qaClient.ExportPQKeys()
 	if err != nil {
 		return nil, fmt.Errorf("export PQ keys: %w", err)
@@ -150,19 +158,43 @@ func firstTimeSetup(
 	}, nil
 }
 
-func credsFilePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("UserConfigDir: %w", err)
+// credsFilePathCandidates returns config paths to try, in priority order.
+func credsFilePathCandidates() ([]string, error) {
+	var paths []string
+
+	// 1) Real home when running as a snap
+	if realHome := os.Getenv("SNAP_REAL_HOME"); realHome != "" {
+		paths = append(paths,
+			filepath.Join(realHome, ".config", "quantumauth", "client_identity.json"))
 	}
-	base := filepath.Join(dir, "quantumauth")
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", base, err)
+
+	// 2) Plain HOME (non-snap, or snap but still valid)
+	if home := os.Getenv("HOME"); home != "" {
+		p := filepath.Join(home, ".config", "quantumauth", "client_identity.json")
+		if len(paths) == 0 || paths[len(paths)-1] != p {
+			paths = append(paths, p)
+		}
 	}
-	return filepath.Join(base, "client_identity.json"), nil
+
+	// 3) Legacy location (whatever UserConfigDir resolves to)
+	if dir, err := os.UserConfigDir(); err == nil {
+		p := filepath.Join(dir, "quantumauth", "client_identity.json")
+		if len(paths) == 0 || paths[len(paths)-1] != p {
+			paths = append(paths, p)
+		}
+	} else if len(paths) == 0 {
+		// nothing else to fall back to
+		return nil, fmt.Errorf("UserConfigDir: %w", err)
+	}
+
+	return paths, nil
 }
 
 func writeCredsFile(path string, fd fileData) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+
 	b, err := json.MarshalIndent(fd, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal creds: %w", err)
@@ -190,7 +222,6 @@ func promptLineWithDefault(label, def string) string {
 
 func promptPassword(label string) (string, error) {
 	fmt.Print(label)
-	// no echo
 	b, err := term.ReadPassword(int(syscall.Stdin))
 	fmt.Println()
 	if err != nil {
