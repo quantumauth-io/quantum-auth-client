@@ -36,9 +36,7 @@ func main() {
 	// --- Handle qa:// URL launch (qa://ping, qa://whatever) ---
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "qa://") {
 		urlArg := os.Args[1]
-		log.Info("launched via QA URL: %s", urlArg)
-		// You can parse the URL if you ever want extra behavior, but for now:
-		// just continue normal startup so the local HTTP API comes up.
+		log.Info("launched via QA", "url", urlArg)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
