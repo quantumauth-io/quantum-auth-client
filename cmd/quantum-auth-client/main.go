@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -32,12 +31,6 @@ func main() {
 		"commit", Commit,
 		"build_date", BuildDate,
 	)
-
-	// --- Handle qa:// URL launch (qa://ping, qa://whatever) ---
-	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "qa://") {
-		urlArg := os.Args[1]
-		log.Info("launched via QA", "url", urlArg)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -83,11 +76,6 @@ func main() {
 		Addr:    addr,
 		Handler: handler,
 	}
-
-	log.Info("quantum-auth-client listening",
-		"address", addr,
-		"server", cfg.ClientSettings.ServerURL,
-	)
 
 	go func() {
 		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

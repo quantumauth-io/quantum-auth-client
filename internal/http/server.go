@@ -75,11 +75,6 @@ func (s *Server) handleExtensionAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Info("extension request",
-		"path", r.URL.Path,
-		"action", extReq.Action,
-	)
-
 	switch extReq.Action {
 	case "ping":
 		writeJSON(w, http.StatusOK, extensionResponse{
@@ -137,7 +132,7 @@ func (s *Server) handleRequestChallenge(
 		})
 		return
 	}
-	log.Info("challenge", "id", chID)
+
 	signedHeaders, err := s.qaClient.SignRequest(
 		req.Method,
 		req.Path,

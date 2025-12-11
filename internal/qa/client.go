@@ -53,7 +53,6 @@ func NewClient(baseURL string, tpmClient tpmdevice.Client) (*Client, error) {
 	if tpmClient == nil {
 		return nil, fmt.Errorf("tpm client is nil")
 	}
-	log.Info("Creating new QA client", "baseURL", baseURL)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -111,7 +110,6 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Info("RegisterUser raw body:", "body", string(bodyBytes))
 
 	if resp.StatusCode == http.StatusCreated {
 		var out registerUserResponse

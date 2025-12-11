@@ -69,8 +69,6 @@ func EnsureLogin(
 		if err := qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {
 			return nil, fmt.Errorf("load PQ keys from creds file: %w", err)
 		}
-	} else {
-		log.Info("creds file has no PQ keys; continuing with ephemeral PQ keypair (full login will likely fail)")
 	}
 
 	pwd, err := promptPassword("QuantumAuth password: ")
@@ -87,9 +85,11 @@ func EnsureLogin(
 	// verify with server before starting client
 	if err := qaClient.FullLogin(ctx, state.UserID, state.DeviceID, string(state.Password)); err != nil {
 		log.Error("full login failed", "error", err)
-		log.Error("db error", "type", fmt.Sprintf("%T", err), "err", fmt.Sprintf("%+v", err))
+
 		return nil, err
 	}
+
+	log.Info("successfully logged in", "user", state.UserID)
 
 	return state, nil
 
@@ -114,19 +114,16 @@ func firstTimeSetup(
 		return nil, fmt.Errorf("read password: %w", err)
 	}
 
-	log.Info("registering QuantumAuth user")
 	userID, err := qaClient.RegisterUser(ctx, email, password, username)
 	if err != nil {
 		return nil, fmt.Errorf("register user: %w", err)
 	}
 	log.Info("user registered", "user_id", truncate(userID))
 
-	log.Info("registering QuantumAuth device")
 	deviceID, err := qaClient.RegisterDevice(ctx, userID, deviceLabel)
 	if err != nil {
 		return nil, fmt.Errorf("register device: %w", err)
 	}
-	log.Info("device registered", "device_id", truncate(deviceID))
 
 	// NEW: export PQ keys from the QA client so we can reuse them next run
 	pqPubB64, pqPrivB64, err := qaClient.ExportPQKeys()
