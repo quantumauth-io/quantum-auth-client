@@ -70,8 +70,6 @@ snapcrafts:
     confinement: strict
     base: core22
 
-    icon: assets/icon.png
-    
     builds:
       - quantum-auth-client
 
