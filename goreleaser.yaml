@@ -70,7 +70,8 @@ snapcrafts:
     confinement: strict
     base: core22
 
-    # use the existing GoReleaser build with this id
+    icon: assets/icon.png
+    
     builds:
       - quantum-auth-client
 
@@ -80,6 +81,7 @@ snapcrafts:
         plugs:
           - network
           - home
+          - tpm
 
 scoops:
   - name: quantum-auth-client
