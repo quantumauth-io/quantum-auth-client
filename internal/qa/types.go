@@ -21,7 +21,16 @@ type registerUserRequest struct {
 	Password string `json:"password"`
 }
 
+type getUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 type registerUserResponse struct {
+	UserID string `json:"user_id"`
+}
+
+type getUserResponse struct {
 	UserID string `json:"user_id"`
 }
 

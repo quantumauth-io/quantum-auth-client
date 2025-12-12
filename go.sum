@@ -30,6 +30,8 @@ github.com/quantumauth-io/quantum-auth v0.0.0-20251211082747-af7567527bac h1:nX0
 github.com/quantumauth-io/quantum-auth v0.0.0-20251211082747-af7567527bac/go.mod h1:TLyCrq39GhUhxWjb11VLWtjgb1zwDtz/3NlqRBTlPmU=
 github.com/quantumauth-io/quantum-auth v0.0.0-20251211212030-d40b4c3efe75 h1:JeydKoXdndr3UPCzq9CLAFH7qfYdc45bE8viRmhRevQ=
 github.com/quantumauth-io/quantum-auth v0.0.0-20251211212030-d40b4c3efe75/go.mod h1:TLyCrq39GhUhxWjb11VLWtjgb1zwDtz/3NlqRBTlPmU=
+github.com/quantumauth-io/quantum-auth v0.0.0-20251212043202-4918fe556c96 h1:J3/zehCG0P3U0CmCLnC8Qv+lvf2Vgkxj3rg7xEtZa9o=
+github.com/quantumauth-io/quantum-auth v0.0.0-20251212043202-4918fe556c96/go.mod h1:TLyCrq39GhUhxWjb11VLWtjgb1zwDtz/3NlqRBTlPmU=
 github.com/quantumauth-io/quantum-go-utils v0.0.10 h1:SMY9K4dpwR/VkB81pWt6DTa3aV7xRoP3IRwR03D+abM=
 github.com/quantumauth-io/quantum-go-utils v0.0.10/go.mod h1:ATqtCmByVLN4lRW6x+f/FfBmqsQ53mEIjxqCxLzZ9lc=
 github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=

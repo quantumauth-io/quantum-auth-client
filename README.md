@@ -30,6 +30,11 @@ The client handles:
 
 ### Linux
 
+
+[![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/quantum-auth-client)
+
+Manual installation
+
 1. **Download** the latest release archive (`.tar.gz`) from:  
    https://github.com/quantumauth-io/quantum-auth-client/releases
 

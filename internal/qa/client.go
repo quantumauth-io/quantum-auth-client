@@ -122,6 +122,38 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 	return "", fmt.Errorf("registerUser: status %d: %s", resp.StatusCode, string(bodyBytes))
 }
 
+// GetUserByEmailAndPassword wraps POST /users/me on the quantum-auth server.
+func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password string) (string, error) {
+	reqBody := getUserRequest{Email: email, Password: password}
+	body, _ := json.Marshal(reqBody)
+
+	url := c.BaseURL + "/users/me"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusCreated {
+		var out getUserResponse
+		if err = json.Unmarshal(bodyBytes, &out); err != nil {
+			return "", fmt.Errorf("decode registerUser response: %w", err)
+		}
+		return out.UserID, nil
+	}
+
+	return "", fmt.Errorf("registerUser: status %d: %s", resp.StatusCode, string(bodyBytes))
+}
+
 // RegisterDevice wraps POST /devices/register.
 func (c *Client) RegisterDevice(ctx context.Context, userID, label string) (string, error) {
 	reqBody := registerDeviceRequest{

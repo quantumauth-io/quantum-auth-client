@@ -62,14 +62,15 @@ func main() {
 		}
 	}()
 
-	authState, err := login.EnsureLogin(ctx, qaClient, cfg.ClientSettings.Email, cfg.ClientSettings.DeviceLabel)
+	authClient := login.NewQAClientLoginService(ctx, qaClient, cfg.ClientSettings.Email, cfg.ClientSettings.DeviceLabel)
+	defer authClient.Clear()
+
+	_, err = authClient.EnsureLogin()
 	if err != nil {
 		log.Error("login/setup failed", "error", err)
-		return
 	}
-	defer authState.Clear()
 
-	handler := clienthttp.NewServer(qaClient, authState)
+	handler := clienthttp.NewServer(qaClient, authClient)
 
 	addr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)
 	server := &http.Server{

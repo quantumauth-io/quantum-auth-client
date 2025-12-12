@@ -11,9 +11,9 @@ import (
 )
 
 type Server struct {
-	qaClient  *qa.Client
-	authState *login.State
-	mux       *http.ServeMux
+	qaClient   *qa.Client
+	authClient *login.QAClientLoginService
+	mux        *http.ServeMux
 }
 
 type extensionRequest struct {
@@ -34,11 +34,11 @@ type extensionResponse struct {
 	Data  interface{} `json:"data,omitempty"`
 }
 
-func NewServer(qaClient *qa.Client, authState *login.State) http.Handler {
+func NewServer(qaClient *qa.Client, authState *login.QAClientLoginService) http.Handler {
 	s := &Server{
-		qaClient:  qaClient,
-		authState: authState,
-		mux:       http.NewServeMux(),
+		qaClient:   qaClient,
+		authClient: authState,
+		mux:        http.NewServeMux(),
 	}
 
 	// extension bridge
@@ -98,7 +98,7 @@ func (s *Server) handleRequestChallenge(
 	ctx context.Context,
 	extReq extensionRequest,
 ) {
-	if s.authState == nil {
+	if s.authClient == nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{
 			OK:    false,
 			Error: "auth state not initialised",
@@ -123,7 +123,7 @@ func (s *Server) handleRequestChallenge(
 		return
 	}
 
-	chID, err := s.qaClient.RequestChallenge(ctx, s.authState.DeviceID)
+	chID, err := s.qaClient.RequestChallenge(ctx, s.authClient.State.DeviceID)
 	if err != nil {
 		log.Error("Failed to request challenge", "error", err)
 		writeJSON(w, http.StatusBadGateway, extensionResponse{
@@ -137,8 +137,8 @@ func (s *Server) handleRequestChallenge(
 		req.Method,
 		req.Path,
 		req.BackendHost,
-		s.authState.UserID,
-		s.authState.DeviceID,
+		s.authClient.State.UserID,
+		s.authClient.State.DeviceID,
 		chID,
 		nil,
 	)
