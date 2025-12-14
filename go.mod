@@ -4,8 +4,9 @@ go 1.25.4
 
 require (
 	github.com/cloudflare/circl v1.6.1
-	github.com/quantumauth-io/quantum-auth v0.0.0-20251212043202-4918fe556c96
-	github.com/quantumauth-io/quantum-go-utils v0.0.10
+	github.com/google/uuid v1.6.0
+	github.com/quantumauth-io/quantum-auth v0.0.0-20251212071641-85d1df9c401a
+	github.com/quantumauth-io/quantum-go-utils v0.0.11
 	golang.org/x/term v0.38.0
 )
 

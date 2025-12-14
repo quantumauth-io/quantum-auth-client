@@ -21,7 +21,7 @@ cp "./${APP_NAME}" "$INSTALL_DIR/$APP_NAME"
 chmod +x "$INSTALL_DIR/$APP_NAME"
 echo "[QuantumAuth] Binary installed to $INSTALL_DIR/$APP_NAME"
 
-# 3) Create .desktop entry (qa:// handler)
+# 3) Create .desktop entry (types:// handler)
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=QuantumAuth Client
@@ -35,8 +35,8 @@ EOF
 
 echo "[QuantumAuth] Desktop file created at $DESKTOP_FILE"
 
-# 4) Register qa:// scheme
-xdg-mime default "${APP_NAME}.desktop" x-scheme-handler/qa || true
+# 4) Register types:// scheme
+xdg-mime default "${APP_NAME}.desktop" x-scheme-handler/types || true
 update-desktop-database "$DESKTOP_DIR" || true
 
 echo "[QuantumAuth] qa:// URL scheme registered"

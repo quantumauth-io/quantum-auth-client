@@ -7,7 +7,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
+	"github.com/quantumauth-io/quantum-go-utils/tpmdevice"
 )
 
 func NewRuntimeTPM(ctx context.Context) (tpmdevice.Client, error) {
