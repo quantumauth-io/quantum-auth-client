@@ -25,6 +25,11 @@ var (
 	BuildDate = "unknown"
 )
 
+var allowedOrigins = []string{
+	"http://127.0.0.1:6137",
+	"http://localhost:6137",
+}
+
 func main() {
 	log.Info("quantum-auth-client",
 		"version", Version,
@@ -70,7 +75,10 @@ func main() {
 		log.Error("login/setup failed", "error", err)
 	}
 
-	handler := clienthttp.NewServer(qaClient, authClient)
+	handler, err := clienthttp.NewServer(qaClient, authClient, allowedOrigins)
+	if err != nil {
+		log.Error("failed to create handler", "error", err)
+	}
 
 	addr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)
 	server := &http.Server{

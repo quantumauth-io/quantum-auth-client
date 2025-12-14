@@ -12,9 +12,9 @@ import (
 
 	"github.com/cloudflare/circl/sign"
 	"github.com/cloudflare/circl/sign/schemes"
-	qareq "github.com/quantumauth-io/quantum-auth/pkg/qa/requests"
-	"github.com/quantumauth-io/quantum-auth/pkg/tpmdevice"
 	"github.com/quantumauth-io/quantum-go-utils/log"
+	qareq "github.com/quantumauth-io/quantum-go-utils/qa/requests"
+	"github.com/quantumauth-io/quantum-go-utils/tpmdevice"
 )
 
 var pqScheme sign.Scheme
