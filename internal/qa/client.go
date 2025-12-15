@@ -92,8 +92,10 @@ func (c *Client) PQPublicKey() string  { return c.pqPubB64 }
 // ===== high-level flow methods =====
 
 // RegisterUser wraps POST /users/register on the quantum-auth server.
-func (c *Client) RegisterUser(ctx context.Context, email, password, username string) (string, error) {
-	reqBody := registerUserRequest{Email: email, Password: password, UserName: username}
+func (c *Client) RegisterUser(ctx context.Context, email string, password []byte, username string) (string, error) {
+	pwB64 := base64.RawStdEncoding.EncodeToString(password)
+	reqBody := registerUserRequest{Email: email, PasswordB64: pwB64, UserName: username}
+
 	b, _ := json.Marshal(reqBody)
 
 	url := c.BaseURL + "/users/register"
@@ -123,8 +125,9 @@ func (c *Client) RegisterUser(ctx context.Context, email, password, username str
 }
 
 // GetUserByEmailAndPassword wraps POST /users/me on the quantum-auth server.
-func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password string) (string, error) {
-	reqBody := getUserRequest{Email: email, Password: password}
+func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password []byte) (string, error) {
+	pwB64 := base64.RawStdEncoding.EncodeToString(password)
+	reqBody := getUserRequest{Email: email, PasswordB64: pwB64}
 	body, _ := json.Marshal(reqBody)
 
 	url := c.BaseURL + "/users/me"
@@ -235,7 +238,7 @@ func (c *Client) CompleteChallenge(
 	ctx context.Context,
 	chID, devID string,
 	nonce int64,
-	password string,
+	password []byte,
 ) (bool, string, error) {
 
 	// message
@@ -263,13 +266,15 @@ func (c *Client) CompleteChallenge(
 // verifyAuth POSTs /auth/verify.
 func (c *Client) verifyAuth(
 	ctx context.Context,
-	chID, devID, password, tpmSig, pqSig string,
+	chID, devID string, password []byte, tpmSig, pqSig string,
 ) (bool, string, error) {
+
+	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 
 	reqBody := authVerifyRequest{
 		ChallengeID:  chID,
 		DeviceID:     devID,
-		Password:     password,
+		PasswordB64:  pwB64,
 		TPMSignature: tpmSig,
 		PQSignature:  pqSig,
 	}
@@ -357,7 +362,7 @@ func (c *Client) SignRequest(
 
 // FullLogin performs a one-shot full authentication against the QA server.
 // It proves: password + TPM key + PQ key for the given user/device.
-func (c *Client) FullLogin(ctx context.Context, userID, deviceID, password string) error {
+func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, password []byte) error {
 	// message bound to this user/device & purpose
 	msg := struct {
 		UserID   string `json:"user_id"`
@@ -389,10 +394,12 @@ func (c *Client) FullLogin(ctx context.Context, userID, deviceID, password strin
 		return fmt.Errorf("fullLogin: TPM sign failed: %w", err)
 	}
 
+	pwB64 := base64.RawStdEncoding.EncodeToString(password)
+
 	reqBody := fullLoginRequest{
 		UserID:       userID,
 		DeviceID:     deviceID,
-		Password:     password,
+		PasswordB64:  pwB64,
 		MessageB64:   base64.StdEncoding.EncodeToString(msgBytes),
 		TPMSignature: tpmSigB64,
 		PQSignature:  pqSigB64,

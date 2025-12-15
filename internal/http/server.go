@@ -166,7 +166,7 @@ func NewServer(qaClient *qa.Client, authState *login.QAClientLoginService, uiAll
 	s.mux.HandleFunc("/agent/session/validate", s.withAgentGuards(s.handleAgentSessionValidate))
 
 	// Challenge endpoint
-	s.mux.HandleFunc("/extension/auth", s.withExtensionLocalGuards(s.handleExtensionAuth))
+	s.mux.HandleFunc("/extension/auth", s.withExtensionPairedGuards(s.handleExtensionAuth))
 
 	// Extension management (paired extension only)
 	s.mux.HandleFunc("/extension/permissions", s.withExtensionPairedGuards(s.handleGetPermissions))
@@ -316,14 +316,6 @@ func (s *Server) withAgentGuards(next http.HandlerFunc) http.HandlerFunc {
 
 		receivedToken := r.Header.Get(agentSessionHeader)
 
-		log.Info("agent guard",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"origin", normalizeOrigin(r.Header.Get("Origin")),
-			"tokenPresent", receivedToken != "",
-			"tokenMatch", receivedToken == s.agentSessionToken,
-		)
-
 		// Auth required only for real requests (preflight is handled in withCORS)
 		if receivedToken != s.agentSessionToken {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -340,7 +332,6 @@ func (s *Server) withAgentGuards(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleAgentExtensionPair(w http.ResponseWriter, r *http.Request) {
-	log.Error("agent extension pair handler", "HERE", "handleAgentExtensionPair")
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -412,6 +403,7 @@ func (s *Server) withExtensionPairedGuards(next http.HandlerFunc) http.HandlerFu
 			http.Error(w, "extension not paired", http.StatusPreconditionRequired)
 			return
 		}
+
 		if got := r.Header.Get(extensionPairHeader); got == "" || got != token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -475,6 +467,7 @@ func (s *Server) handleExtensionAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var extReq extensionRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&extReq); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
@@ -538,7 +531,6 @@ func (s *Server) handleRequestChallenge(w http.ResponseWriter, ctx context.Conte
 
 	chID, err := s.qaClient.RequestChallenge(ctx, s.authClient.State.DeviceID)
 	if err != nil {
-		log.Error("Failed to request challenge", "error", err)
 		writeJSON(w, http.StatusBadGateway, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
@@ -571,6 +563,7 @@ func (s *Server) handleGetPermissions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	writeJSON(w, http.StatusOK, extensionResponse{
 		OK: true,
 		Data: map[string]any{
@@ -585,6 +578,7 @@ func (s *Server) handleGetPermissionStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	origin := normalizeOrigin(r.URL.Query().Get("origin"))
+
 	if origin == "" {
 		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid origin"})
 		return
@@ -609,7 +603,6 @@ func (s *Server) handleSetPermission(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-
 	origin := normalizeOrigin(req.Origin)
 	if origin == "" {
 		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid origin"})
@@ -717,7 +710,6 @@ func (s *Server) withExtensionLocalGuards(next http.HandlerFunc) http.HandlerFun
 
 func isLoopbackRequest(r *http.Request) bool {
 	ra := r.RemoteAddr
-	log.Warn("loopback request", "method", r.Method, "path", r.URL.Path, "remote", ra)
 	h, _, err := net.SplitHostPort(ra)
 	if err != nil {
 		ip := net.ParseIP(ra)

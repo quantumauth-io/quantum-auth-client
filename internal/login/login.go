@@ -3,6 +3,8 @@ package login
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,10 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
 	"github.com/quantumauth-io/quantum-go-utils/log"
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/term"
 )
 
@@ -30,7 +33,30 @@ type fileData struct {
 type State struct {
 	UserID   string
 	DeviceID string
-	Password []byte
+}
+
+type encFile struct {
+	Version int `json:"version"`
+
+	// KDF params (tune per device class)
+	ArgonTime    uint32 `json:"argon_time"`
+	ArgonMemory  uint32 `json:"argon_memory"`  // KiB
+	ArgonThreads uint8  `json:"argon_threads"` // parallelism
+	ArgonKeyLen  uint32 `json:"argon_key_len"`
+
+	SaltB64  string `json:"salt_b64"`
+	NonceB64 string `json:"nonce_b64"`
+	CTB64    string `json:"ct_b64"`
+}
+
+// Reasonable defaults for desktop/laptop.
+// Memory is KiB: 64*1024 = 64 MiB.
+var defaultKDF = encFile{
+	Version:      1,
+	ArgonTime:    3,
+	ArgonMemory:  64 * 1024,
+	ArgonThreads: 2,
+	ArgonKeyLen:  32,
 }
 
 type QAClientLoginService struct {
@@ -58,40 +84,29 @@ func NewQAClientLoginService(
 
 // EnsureLogin is called on client startup.
 func (qas *QAClientLoginService) EnsureLogin() (*State, error) {
+	// after you set qas.path = paths[0] (canonical write location)
+
 	paths, err := credsFilePathCandidates()
 	if err != nil {
 		return nil, fmt.Errorf("get credential paths: %w", err)
 	}
-
-	// Canonical write location (always)
 	if len(paths) > 0 {
 		qas.path = paths[0]
 	}
 
-	var (
-		foundPath string
-		data      []byte
-	)
-
-	// Try all known locations (real HOME first, then legacy)
+	// Find any existing creds file path (we’ll decrypt, not read raw json)
+	var foundPath string
 	for _, p := range paths {
-		d, err := os.ReadFile(p)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("read creds file %s: %w", p, err)
+		if _, err := os.Stat(p); err == nil {
+			foundPath = p
+			break
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat creds file %s: %w", p, err)
 		}
-		foundPath = p
-		data = d
-		break
 	}
 
 	if foundPath == "" {
-		log.Info(
-			"no QuantumAuth credentials file found, running first-time setup",
-			"write_path", qas.path,
-		)
+		log.Info("no QuantumAuth credentials file found, running first-time setup", "write_path", qas.path)
 		state, err := qas.handleMissingCreds()
 		if err != nil {
 			return nil, err
@@ -100,35 +115,30 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, error) {
 		return state, nil
 	}
 
-	var fd fileData
-	if err := json.Unmarshal(data, &fd); err != nil {
-		return nil, fmt.Errorf("parse creds file %s: %w", foundPath, err)
+	pwd, err := promptPassword("QuantumAuth password: ")
+	if err != nil {
+		return nil, fmt.Errorf("read password: %w", err)
 	}
 
-	// Restore PQ keys
+	defer zero(pwd)
+
+	fd, err := readCredsFileEncrypted(foundPath, pwd)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt creds file %s: %w", foundPath, err)
+	}
+
 	if fd.PQPubKeyB64 != "" && fd.PQPrivKeyB64 != "" {
 		if err := qas.qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {
 			return nil, fmt.Errorf("load PQ keys from creds file: %w", err)
 		}
 	}
 
-	pwd, err := promptPassword("QuantumAuth password: ")
-	if err != nil {
-		return nil, fmt.Errorf("read password: %w", err)
-	}
-
 	state := &State{
 		UserID:   fd.UserID,
 		DeviceID: fd.DeviceID,
-		Password: []byte(pwd),
 	}
 
-	if err := qas.qaClient.FullLogin(
-		qas.ctx,
-		state.UserID,
-		state.DeviceID,
-		string(state.Password),
-	); err != nil {
+	if err := qas.qaClient.FullLogin(qas.ctx, state.UserID, state.DeviceID, pwd); err != nil {
 		log.Error("full login failed", "error", err)
 		state.Clear()
 		return nil, err
@@ -233,7 +243,7 @@ func (qas *QAClientLoginService) registerDevice(userID, deviceLabel string) (str
 
 // Helper: shared logic for exporting PQ keys, writing creds file, and returning State.
 func (qas *QAClientLoginService) persistCredsAndState(
-	userID, deviceID, email, deviceLabel, password string,
+	userID, deviceID, email, deviceLabel string, password []byte,
 ) (*State, error) {
 
 	pqPubB64, pqPrivB64, err := qas.qaClient.ExportPQKeys()
@@ -241,21 +251,20 @@ func (qas *QAClientLoginService) persistCredsAndState(
 		return nil, fmt.Errorf("export PQ keys: %w", err)
 	}
 
-	if err := writeCredsFile(qas.path, fileData{
+	if err := writeCredsFileEncrypted(qas.path, fileData{
 		UserID:       userID,
 		DeviceID:     deviceID,
 		Email:        email,
 		DeviceLabel:  deviceLabel,
 		PQPubKeyB64:  pqPubB64,
 		PQPrivKeyB64: pqPrivB64,
-	}); err != nil {
+	}, password); err != nil {
 		return nil, err
 	}
 
 	state := &State{
 		UserID:   userID,
 		DeviceID: deviceID,
-		Password: []byte(password),
 	}
 
 	qas.State = state
@@ -295,20 +304,111 @@ func credsFilePathCandidates() ([]string, error) {
 	return paths, nil
 }
 
-func writeCredsFile(path string, fd fileData) error {
+func writeCredsFileEncrypted(path string, fd fileData, password []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
 
-	b, err := json.MarshalIndent(fd, "", "  ")
+	plain, err := json.MarshalIndent(fd, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal creds: %w", err)
 	}
-	log.Info("writing credentials file", "path", path)
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return fmt.Errorf("write creds file: %w", err)
+
+	// salt
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("rand salt: %w", err)
+	}
+
+	k := argon2.IDKey(password, salt,
+		defaultKDF.ArgonTime,
+		defaultKDF.ArgonMemory,
+		defaultKDF.ArgonThreads,
+		defaultKDF.ArgonKeyLen,
+	)
+
+	aead, err := chacha20poly1305.NewX(k)
+	if err != nil {
+		return fmt.Errorf("aead: %w", err)
+	}
+
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("rand nonce: %w", err)
+	}
+
+	// Optional: bind encryption to the file path (acts as associated data).
+	// If you move the file, decryption will fail. If you don't want that, set aad=nil.
+	var aad []byte = nil
+
+	ct := aead.Seal(nil, nonce, plain, aad)
+
+	out := defaultKDF
+	out.SaltB64 = base64.StdEncoding.EncodeToString(salt)
+	out.NonceB64 = base64.StdEncoding.EncodeToString(nonce)
+	out.CTB64 = base64.StdEncoding.EncodeToString(ct)
+
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal enc file: %w", err)
+	}
+
+	// Atomic write: tmp -> rename
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write tmp creds file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename creds file: %w", err)
 	}
 	return nil
+}
+
+func readCredsFileEncrypted(path string, password []byte) (fileData, error) {
+	var ef encFile
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fileData{}, fmt.Errorf("read creds file: %w", err)
+	}
+	if err := json.Unmarshal(b, &ef); err != nil {
+		return fileData{}, fmt.Errorf("unmarshal enc file: %w", err)
+	}
+	if ef.Version != 1 {
+		return fileData{}, fmt.Errorf("unsupported creds file version: %d", ef.Version)
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(ef.SaltB64)
+	if err != nil {
+		return fileData{}, fmt.Errorf("decode salt: %w", err)
+	}
+	nonce, err := base64.StdEncoding.DecodeString(ef.NonceB64)
+	if err != nil {
+		return fileData{}, fmt.Errorf("decode nonce: %w", err)
+	}
+	ct, err := base64.StdEncoding.DecodeString(ef.CTB64)
+	if err != nil {
+		return fileData{}, fmt.Errorf("decode ciphertext: %w", err)
+	}
+
+	key := argon2.IDKey(password, salt, ef.ArgonTime, ef.ArgonMemory, ef.ArgonThreads, ef.ArgonKeyLen)
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return fileData{}, fmt.Errorf("aead: %w", err)
+	}
+
+	var aad []byte = nil // no path
+	plain, err := aead.Open(nil, nonce, ct, aad)
+	if err != nil {
+		// Keep this error generic; don't leak whether password was "close".
+		return fileData{}, errors.New("invalid password or corrupted creds file")
+	}
+
+	var fd fileData
+	if err := json.Unmarshal(plain, &fd); err != nil {
+		return fileData{}, fmt.Errorf("unmarshal creds: %w", err)
+	}
+	return fd, nil
 }
 
 func promptLineWithDefault(label, def string) string {
@@ -326,14 +426,22 @@ func promptLineWithDefault(label, def string) string {
 	return line
 }
 
-func promptPassword(label string) (string, error) {
-	fmt.Print(label)
-	b, err := term.ReadPassword(int(syscall.Stdin))
-	fmt.Println()
+func promptPassword(prompt string) ([]byte, error) {
+	_, _ = fmt.Fprint(os.Stderr, prompt)
+
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	_, _ = fmt.Fprintln(os.Stderr) // best-effort newline
+
 	if err != nil {
-		return "", err
+		for i := range pw {
+			pw[i] = 0
+		}
+		return nil, fmt.Errorf("password input failed: %w", err)
 	}
-	return strings.TrimSpace(string(b)), nil
+	if len(pw) == 0 {
+		return nil, fmt.Errorf("password cannot be empty")
+	}
+	return pw, nil
 }
 
 func guessUsername(email string) string {
@@ -343,22 +451,12 @@ func guessUsername(email string) string {
 	return email
 }
 
-func truncate(s string) string {
-	if len(s) <= 8 {
-		return s
-	}
-	return s[:8] + "..."
-}
-
 // Clear zeroes the password when you logout/shutdown.
 func (s *State) Clear() {
 	if s == nil {
 		return
 	}
-	for i := range s.Password {
-		s.Password[i] = 0
-	}
-	s.Password = nil
+	s = nil
 }
 
 func (qas *QAClientLoginService) Clear() {
@@ -375,4 +473,10 @@ func (qas *QAClientLoginService) SetCredsPath(path string) {
 		return
 	}
 	qas.path = path
+}
+
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }

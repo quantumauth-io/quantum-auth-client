@@ -16,14 +16,14 @@ type SignedMessage struct {
 // -------- HTTP DTOs --------
 
 type registerUserRequest struct {
-	UserName string `json:"username"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	UserName    string `json:"username"`
+	Email       string `json:"email"`
+	PasswordB64 string `json:"password_b64"`
 }
 
 type getUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	PasswordB64 string `json:"password_b64"`
 }
 
 type registerUserResponse struct {
@@ -68,7 +68,7 @@ type qaChallengeResponse struct {
 type authVerifyRequest struct {
 	ChallengeID  string `json:"challenge_id"`
 	DeviceID     string `json:"device_id"`
-	Password     string `json:"password"`
+	PasswordB64  string `json:"password_b64"`
 	TPMSignature string `json:"tpm_signature"`
 	PQSignature  string `json:"pq_signature"`
 }
@@ -81,7 +81,7 @@ type authVerifyResponse struct {
 type fullLoginRequest struct {
 	UserID       string `json:"user_id"`
 	DeviceID     string `json:"device_id"`
-	Password     string `json:"password"`
+	PasswordB64  string `json:"password_b64"`
 	MessageB64   string `json:"message_b64"`
 	TPMSignature string `json:"tpm_signature"`
 	PQSignature  string `json:"pq_signature"`
