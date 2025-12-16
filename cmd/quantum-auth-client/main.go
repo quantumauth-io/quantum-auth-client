@@ -73,6 +73,7 @@ func main() {
 	_, err = authClient.EnsureLogin()
 	if err != nil {
 		log.Error("login/setup failed", "error", err)
+		return
 	}
 
 	handler, err := clienthttp.NewServer(qaClient, authClient, allowedOrigins)
