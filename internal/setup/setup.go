@@ -84,16 +84,11 @@ func Run(ctx context.Context, build BuildInfo) error {
 	authClient := login.NewQAClientLoginService(ctx, qaClient, cfg.ClientSettings.Email, cfg.ClientSettings.DeviceLabel)
 	defer authClient.Clear()
 
-	// Prompt once (login creds + user wallet decrypt)
-	pwd, err := login.PromptPassword("QuantumAuth password: ")
+	_, pwd, err := authClient.EnsureLogin()
 	if err != nil {
 		return err
 	}
 	defer login.Zero(pwd)
-
-	if _, err = authClient.EnsureLoginWithPassword(pwd); err != nil {
-		return err
-	}
 
 	// ---- ETH RPC client + select network/rpc
 	ethClient, err := eth.NewFromConfig(ctx, cfg.EthNetworks)
@@ -175,7 +170,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if errors.Is(err, contractwallet.ErrContractNotConfigured) {
 		log.Warn("contract not configured", "path", cwStore.Path, "chain_id", chainID)
 
-		deploy, perr := promptYesNo("No AA wallet contract found for this chain. Deploy TPMVerifier + QuantumAuthAccount now? (y/N): ")
+		deploy, perr := promptYesNo("No AA wallet contract found for this chain. Deploy TPMVerifier + QuantumAuthAccount now? (fund your wallet first) (y/N): ")
 		if perr != nil {
 			return perr
 		}

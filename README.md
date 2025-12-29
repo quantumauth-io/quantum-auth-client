@@ -28,7 +28,7 @@ The client handles:
 
 ### Development
 
-You will need an Infura api ky in your environment
+You will need an Infura api key in your environment
 
 ```
 INFURA_API_KEY=<your-key>
@@ -37,6 +37,7 @@ QA_ENV=develop // for the development environment
 
 QA_ENV=        // if not set it will default to prod
 ```
+
 
 
 ## 📦 Installation

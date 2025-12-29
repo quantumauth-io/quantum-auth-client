@@ -81,10 +81,56 @@ func NewQAClientLoginService(
 }
 
 // EnsureLogin is called on client startup.
-func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, error) {
+// It only prompts for a password if an existing identity file is found.
+func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 	paths, err := securefile.ConfigPathCandidates("quantumauth", "client_identity.json")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	// Canonical write path for this env
+	qas.path = paths[0]
+
+	// Find an existing identity file (strict env only)
+	foundPath := ""
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			foundPath = p
+			break
+		} else if os.IsNotExist(err) {
+			continue
+		} else {
+			return nil, nil, fmt.Errorf("stat creds file %s: %w", p, err)
+		}
+	}
+
+	// No file => first-time setup (no password prompt yet)
+	if foundPath == "" {
+		log.Info("no QuantumAuth credentials file found, running first-time setup", "write_path", qas.path)
+		state, err := qas.handleMissingCreds() // this should set password as part of setup
+		if err != nil {
+			return nil, nil, err
+		}
+		qas.State = state
+		return state, nil, nil
+	}
+
+	// File exists => prompt + decrypt
+	qas.path = foundPath
+
+	pwd, err := PromptPassword("QuantumAuth password: ")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return qas.EnsureLoginWithPassword(pwd)
+}
+
+// EnsureLogin is called on client startup.
+func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []byte, error) {
+	paths, err := securefile.ConfigPathCandidates("quantumauth", "client_identity.json")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Canonical path for this env
@@ -100,7 +146,7 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 		} else if os.IsNotExist(err) {
 			continue
 		} else {
-			return nil, fmt.Errorf("stat creds file %s: %w", p, err)
+			return nil, nil, fmt.Errorf("stat creds file %s: %w", p, err)
 		}
 	}
 
@@ -108,10 +154,10 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 		log.Info("no QuantumAuth credentials file found, running first-time setup", "write_path", qas.path)
 		state, err := qas.handleMissingCreds()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		qas.State = state
-		return state, nil
+		return state, nil, nil
 	}
 
 	// Found in this env; use it for read/decrypt
@@ -120,23 +166,23 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 
 	store, err := userwallet.NewStore()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	_, err = store.Ensure(pwd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sealer := tpmdevice.NewSealer("") // owner auth usually ""
 	devStore, err := ethdevice.NewStore(sealer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	_, err = devStore.Ensure(qas.ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	fd, err := securefile.ReadEncryptedJSON[fileData](
@@ -147,7 +193,7 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt creds file %s: %w", foundPath, err)
+		return nil, nil, fmt.Errorf("decrypt creds file %s: %w", foundPath, err)
 	}
 
 	// Optional: migrate to canonical path if we loaded from legacy path
@@ -155,7 +201,7 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 
 	if fd.PQPubKeyB64 != "" && fd.PQPrivKeyB64 != "" {
 		if err := qas.qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {
-			return nil, fmt.Errorf("load PQ keys from creds file: %w", err)
+			return nil, nil, fmt.Errorf("load PQ keys from creds file: %w", err)
 		}
 	}
 
@@ -164,12 +210,12 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, er
 	if err := qas.qaClient.FullLogin(qas.ctx, state.UserID, state.DeviceID, pwd); err != nil {
 		log.Error("full login failed", "error", err)
 		state.Clear()
-		return nil, err
+		return nil, nil, err
 	}
 
 	qas.State = state
 	log.Info("successfully logged in", "user", state.UserID)
-	return state, nil
+	return state, pwd, nil
 }
 
 // When no credentials file exists, offer the user two paths:
