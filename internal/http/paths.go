@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	securefile "github.com/quantumauth-io/quantum-auth-client/internal/securefile"
 )
 
 // qaConfigDir returns the canonical directory where the QA client can
@@ -14,14 +16,27 @@ import (
 //  2. HOME (normal installs)
 //  3. os.UserConfigDir() fallback
 func qaConfigDir() (string, error) {
+	envFolder, err := securefile.QaEnvFolder()
+	if err != nil {
+		return "", err
+	}
+
+	join := func(base string) string {
+		dir := filepath.Join(base, ".config", "quantumauth")
+		if envFolder != "" {
+			dir = filepath.Join(dir, envFolder)
+		}
+		return dir
+	}
+
 	// Snap: use the real user home, not the confined snap home
 	if realHome := os.Getenv("SNAP_REAL_HOME"); realHome != "" {
-		return filepath.Join(realHome, ".config", "quantumauth"), nil
+		return join(realHome), nil
 	}
 
 	// Normal environment
 	if home := os.Getenv("HOME"); home != "" {
-		return filepath.Join(home, ".config", "quantumauth"), nil
+		return join(home), nil
 	}
 
 	// Fallback
@@ -29,7 +44,7 @@ func qaConfigDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("UserConfigDir: %w", err)
 	}
-	return filepath.Join(dir, "quantumauth"), nil
+	return filepath.Join(dir, "quantumauth", envFolder), nil
 }
 
 // permissionsFilePath is where we store the origin allowlist.

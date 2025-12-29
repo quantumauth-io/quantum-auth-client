@@ -126,6 +126,7 @@ func (c *Client) RegisterUser(ctx context.Context, email string, password []byte
 
 // GetUserByEmailAndPassword wraps POST /users/me on the quantum-auth server.
 func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password []byte) (string, error) {
+	log.Info("getting user by email and password", "email", email)
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := getUserRequest{Email: email, PasswordB64: pwB64}
 	body, _ := json.Marshal(reqBody)
@@ -158,9 +159,12 @@ func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, pa
 }
 
 // RegisterDevice wraps POST /devices/register.
-func (c *Client) RegisterDevice(ctx context.Context, userID, label string) (string, error) {
+func (c *Client) RegisterDevice(ctx context.Context, userEmail string, password []byte, label string) (string, error) {
+
+	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := registerDeviceRequest{
-		UserID:       userID,
+		UserEmail:    userEmail,
+		PasswordB64:  pwB64,
 		DeviceLabel:  label,
 		TPMPublicKey: c.tpmPubB64,
 		PQPublicKey:  c.pqPubB64,

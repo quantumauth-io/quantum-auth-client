@@ -25,7 +25,7 @@ func Handler() (http.Handler, error) {
 		return nil, err
 	}
 
-	// Ensure common types are known (some systems miss .js/.mjs/etc)
+	// Ensure common wtypes are known (some systems miss .js/.mjs/etc)
 	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
 	_ = mime.AddExtensionType(".mjs", "application/javascript; charset=utf-8")
 	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")

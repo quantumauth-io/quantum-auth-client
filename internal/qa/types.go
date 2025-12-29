@@ -35,7 +35,8 @@ type getUserResponse struct {
 }
 
 type registerDeviceRequest struct {
-	UserID       string `json:"user_id"`
+	UserEmail    string `json:"user_email"`
+	PasswordB64  string `json:"password_b64"`
 	DeviceLabel  string `json:"device_label"`
 	TPMPublicKey string `json:"tpm_public_key"`
 	PQPublicKey  string `json:"pq_public_key"`
