@@ -107,12 +107,12 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 	// No file => first-time setup (no password prompt yet)
 	if foundPath == "" {
 		log.Info("no QuantumAuth credentials file found, running first-time setup", "write_path", qas.path)
-		state, err := qas.handleMissingCreds() // this should set password as part of setup
+		state, pwd, err := qas.handleMissingCreds() // this should set password as part of setup
 		if err != nil {
 			return nil, nil, err
 		}
 		qas.State = state
-		return state, nil, nil
+		return state, pwd, nil
 	}
 
 	// File exists => prompt + decrypt
@@ -152,12 +152,12 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []
 
 	if foundPath == "" {
 		log.Info("no QuantumAuth credentials file found, running first-time setup", "write_path", qas.path)
-		state, err := qas.handleMissingCreds()
+		state, pwd, err := qas.handleMissingCreds()
 		if err != nil {
 			return nil, nil, err
 		}
 		qas.State = state
-		return state, nil, nil
+		return state, pwd, nil
 	}
 
 	// Found in this env; use it for read/decrypt
@@ -221,7 +221,7 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []
 // When no credentials file exists, offer the user two paths:
 // 1) Create a new account (first-time setup)
 // 2) Add this device to an existing account
-func (qas *QAClientLoginService) handleMissingCreds() (*State, error) {
+func (qas *QAClientLoginService) handleMissingCreds() (*State, []byte, error) {
 	fmt.Println("No QuantumAuth credentials were found for this device.")
 	fmt.Println()
 	fmt.Println("Please choose an option:")
@@ -234,7 +234,7 @@ func (qas *QAClientLoginService) handleMissingCreds() (*State, error) {
 		fmt.Print("Enter 1 or 2: ")
 		if _, err := fmt.Scanln(&choice); err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil, err
+				return nil, nil, err
 			}
 			continue
 		}
@@ -252,7 +252,7 @@ func (qas *QAClientLoginService) handleMissingCreds() (*State, error) {
 }
 
 // First-time flow: ask for details, register user + device, write file, return state.
-func (qas *QAClientLoginService) firstTimeSetup() (*State, error) {
+func (qas *QAClientLoginService) firstTimeSetup() (*State, []byte, error) {
 	fmt.Println("=== QuantumAuth first-time setup ===")
 
 	email := promptLineWithDefault("Email", qas.defaultEmail)
@@ -261,25 +261,24 @@ func (qas *QAClientLoginService) firstTimeSetup() (*State, error) {
 
 	pwd, err := PromptPassword("Choose a password: ")
 	if err != nil {
-		return nil, fmt.Errorf("read password: %w", err)
+		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
-	defer Zero(pwd)
 
 	userID, err := qas.qaClient.RegisterUser(qas.ctx, email, pwd, username)
 	if err != nil {
-		return nil, fmt.Errorf("register user: %w", err)
+		return nil, nil, fmt.Errorf("register user: %w", err)
 	}
 
 	deviceID, err := qas.registerDevice(email, pwd, deviceLabel)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, pwd)
 }
 
 // Existing-account flow: ask email+password, then add device, write file, return state.
-func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, error) {
+func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, []byte, error) {
 	fmt.Println("=== Add this device to your QuantumAuth account ===")
 
 	email := promptLineWithDefault("Email", qas.defaultEmail)
@@ -287,17 +286,17 @@ func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, error) {
 
 	password, err := PromptPassword("Account password: ")
 	if err != nil {
-		return nil, fmt.Errorf("read password: %w", err)
+		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
 
 	userID, err := qas.qaClient.GetUserByEmailAndPassword(qas.ctx, email, password)
 	if err != nil {
-		return nil, fmt.Errorf("login failed: %w", err)
+		return nil, nil, fmt.Errorf("login failed: %w", err)
 	}
 
 	deviceID, err := qas.registerDevice(email, password, deviceLabel)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, password)
@@ -314,11 +313,11 @@ func (qas *QAClientLoginService) registerDevice(userEmail string, userPasswordB6
 // Helper: shared logic for exporting PQ keys, writing creds file, and returning State.
 func (qas *QAClientLoginService) persistCredsAndState(
 	userID, deviceID, email, deviceLabel string, password []byte,
-) (*State, error) {
+) (*State, []byte, error) {
 
 	pqPubB64, pqPrivB64, err := qas.qaClient.ExportPQKeys()
 	if err != nil {
-		return nil, fmt.Errorf("export PQ keys: %w", err)
+		return nil, nil, fmt.Errorf("export PQ keys: %w", err)
 	}
 
 	if err := securefile.WriteEncryptedJSON(qas.path, fileData{
@@ -331,7 +330,7 @@ func (qas *QAClientLoginService) persistCredsAndState(
 	}, password, securefile.Options{
 		AADFunc: func(_ string) []byte { return []byte("quantumauth:client_identity:v1") },
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	state := &State{
@@ -341,7 +340,7 @@ func (qas *QAClientLoginService) persistCredsAndState(
 
 	qas.State = state
 	log.Info("saved QuantumAuth credentials file", "path", qas.path)
-	return state, nil
+	return state, password, nil
 }
 
 func promptLineWithDefault(label, def string) string {

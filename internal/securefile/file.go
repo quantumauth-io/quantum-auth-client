@@ -81,6 +81,13 @@ func defaultOptions() Options {
 func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options) error {
 	o := mergeOptions(opt...)
 
+	if len(password) == 0 {
+		return errors.New("securefile w: empty password")
+	}
+	if isAllZero(password) {
+		return errors.New("securefile w: zeroed password buffer")
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), o.DirectoryPerm); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
@@ -141,12 +148,20 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 
 // ReadEncryptedJSON reads path, decrypts it using password, and unmarshals JSON into T.
 func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, error) {
+
 	var zero T
 	o := mergeOptions(opt...)
 
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return zero, fmt.Errorf("read file: %w", err)
+	}
+
+	if len(password) == 0 {
+		return zero, errors.New("securefile r: empty password")
+	}
+	if isAllZero(password) {
+		return zero, errors.New("securefile r: zeroed password buffer")
 	}
 
 	var ef KDFParams
@@ -371,4 +386,13 @@ func isNonProdEnvSet() bool {
 	default:
 		return true
 	}
+}
+
+func isAllZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }

@@ -87,6 +87,7 @@ func NewStore() (*Store, error) {
 
 // Ensure loads an existing encrypted wallet or creates + persists a new one if missing.
 func (s *Store) Ensure(password []byte) (*Wallet, error) {
+
 	// Try read first.
 	w, err := securefile.ReadEncryptedJSON[Wallet](s.Path, password, s.Opt)
 	if err == nil {

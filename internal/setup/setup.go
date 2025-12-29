@@ -88,6 +88,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err != nil {
 		return err
 	}
+
 	defer login.Zero(pwd)
 
 	// ---- ETH RPC client + select network/rpc
