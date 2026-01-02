@@ -15,6 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/v2"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/contracts/bindings/go/entrypoint"
 	"github.com/quantumauth-io/quantum-auth-client/internal/contracts/bindings/go/quantumauthaccount"
@@ -452,6 +454,29 @@ func (s *Server) handleWalletSwitchChain(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleWalletSendTransaction(w http.ResponseWriter, r *http.Request) {
+	var req SendTxRequest
+	if !decodeJSONBodyRPC(w, r, &req) {
+		return
+	}
+
+	if strings.TrimSpace(req.Tx.From) == "" {
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "missing tx.from", nil)
+		return
+	}
+
+	from := common.HexToAddress(req.Tx.From)
+
+	// AA path
+	if s.isAAAccount(from) {
+		s.handleSendViaAA(w, r, req)
+		return
+	}
+
+	// EOA path
+	s.handleSendViaEOA(w, r, req, from)
+}
+
+func (s *Server) handleSendViaAA(w http.ResponseWriter, r *http.Request, req SendTxRequest) {
 	netCfg, ok := s.cfg.EthNetworks.Networks[s.cfg.EthNetworks.ActiveNetwork]
 	if !ok {
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletActiveNetworkNotFoundText, nil)
@@ -469,7 +494,6 @@ func (s *Server) handleWalletSendTransaction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var req SendTxRequest
 	if !decodeJSONBodyRPC(w, r, &req) {
 		// decodeJSONBodyRPC already wrote error
 		return
@@ -547,6 +571,114 @@ func (s *Server) handleWalletSendTransaction(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"txHash": tx.Hash().Hex()})
+}
+
+func (s *Server) handleSendViaEOA(w http.ResponseWriter, r *http.Request, req SendTxRequest, from common.Address) {
+	// Ensure we control this EOA
+	wlt, err := s.pickWallet(from)
+	if err != nil {
+		writeRPCError(w, http.StatusForbidden, JSONRPCErrorCodeInvalidRequest, "from address not controlled by this wallet", nil)
+		return
+	}
+
+	// "to" can be empty for contract creation
+	var to *common.Address
+	if strings.TrimSpace(req.Tx.To) != "" && req.Tx.To != HexPrefix0x {
+		t := common.HexToAddress(req.Tx.To)
+		to = &t
+	}
+
+	value := new(big.Int)
+	if req.Tx.Value != "" && req.Tx.Value != HexPrefix0x {
+		// assume hex string
+		v, ok := new(big.Int).SetString(strings.TrimPrefix(req.Tx.Value, HexPrefix0x), 16)
+		if !ok {
+			writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.value", req.Tx.Value)
+			return
+		}
+		value = v
+	}
+
+	data := common.FromHex(req.Tx.Data)
+
+	// Chain ID
+	chainID, err := s.ethClient.ChainID(r.Context())
+	if err != nil {
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "failed to get chainId", err.Error())
+		return
+	}
+
+	// Nonce
+	nonce, err := s.ethClient.PendingNonceAt(r.Context(), from)
+	if err != nil {
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "failed to get nonce", err.Error())
+		return
+	}
+
+	msg := utilsEth.CallMsg{
+		From:  req.Tx.From,
+		To:    req.Tx.To,
+		Value: req.Tx.Value,
+		Data:  req.Tx.Data,
+	}
+
+	estimatedGas, err := s.ethClient.EstimateGas(r.Context(), msg)
+	if err != nil {
+		writeRPCError(
+			w,
+			http.StatusInternalServerError,
+			JSONRPCErrorCodeInternalError,
+			"estimateGas failed",
+			err.Error(),
+		)
+		return
+	}
+
+	// Fees (EIP-1559). Use request values if present, else suggest.
+	maxFeePerGas, maxPriorityFeePerGas, err := s.resolveEIP1559Fees(r.Context(), req)
+	if err != nil {
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "fee resolution failed", err.Error())
+		return
+	}
+
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   chainID,
+		Nonce:     nonce,
+		Gas:       estimatedGas.Uint64(),
+		To:        to,
+		Value:     value,
+		Data:      data,
+		GasTipCap: maxPriorityFeePerGas,
+		GasFeeCap: maxFeePerGas,
+	})
+
+	signedTx, err := signEOATransaction(r.Context(), wlt, tx, chainID)
+	if err != nil {
+		writeRPCError(
+			w,
+			http.StatusInternalServerError,
+			JSONRPCErrorCodeInternalError,
+			"EOA signing failed",
+			err.Error(),
+		)
+		return
+	}
+
+	rawBytes, err := signedTx.MarshalBinary()
+	if err != nil {
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "marshal tx failed", err.Error())
+		return
+	}
+
+	rawHex := hexutil.Encode(rawBytes)
+
+	txHash, err := s.ethClient.SendRawTransaction(r.Context(), rawHex)
+	if err != nil {
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "SendTransaction failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"txHash": txHash.Hex()})
 }
 
 func (s *Server) handleWalletEstimateSendTransaction(w http.ResponseWriter, r *http.Request) {

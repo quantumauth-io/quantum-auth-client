@@ -136,6 +136,9 @@ type DappTxParams struct {
 	Gas      string `json:"gas,omitempty"`
 	GasPrice string `json:"gasPrice,omitempty"`
 	Nonce    string `json:"nonce,omitempty"`
+
+	MaxFeePerGas         string `json:"maxFeePerGas,omitempty"`
+	MaxPriorityFeePerGas string `json:"maxPriorityFeePerGas,omitempty"`
 }
 
 type UserOperation struct {
