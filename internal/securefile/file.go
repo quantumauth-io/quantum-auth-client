@@ -208,6 +208,12 @@ func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, 
 	return out, nil
 }
 
+// AtomicWriteFile writes data to path atomically (write temp + rename).
+// This is NOT encrypted; it's a utility for safe writes.
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	return atomicWriteFile(path, data, perm)
+}
+
 // ConfigPathCandidates returns config paths to try, in priority order.
 // Uses QA_ENV to optionally add a subfolder: local/ or develop/.
 func ConfigPathCandidates(app, filename string) ([]string, error) {
@@ -218,45 +224,31 @@ func ConfigPathCandidates(app, filename string) ([]string, error) {
 	return configPathCandidatesForEnvFolder(app, filename, envFolder)
 }
 
-// ConfigPathCandidatesWithProdFallback returns env-aware candidates first,
-// and if QA_ENV is set to a non-prod value, also returns prod candidates as fallback.
-func ConfigPathCandidatesWithProdFallback(app, filename string) ([]string, error) {
-	envFolder, err := QaEnvFolder()
+// WriteJSON marshals v as pretty JSON and writes it atomically to path.
+// Creates parent directories using permDir.
+func WriteJSON[T any](path string, v T, permFile, permDir os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), permDir); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("marshal json: %w", err)
 	}
 
-	// First: env-aware paths (may be prod if envFolder == "")
-	envPaths, err := configPathCandidatesForEnvFolder(app, filename, envFolder)
+	return AtomicWriteFile(path, b, permFile)
+}
+
+// ReadJSON reads and unmarshals JSON from path into T.
+func ReadJSON[T any](path string) (T, error) {
+	var zero T
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return zero, fmt.Errorf("read file: %w", err)
 	}
-
-	// If we're effectively prod, no need to add prod fallback.
-	if !isNonProdEnvSet() || envFolder == "" {
-		return envPaths, nil
-	}
-
-	// Append prod paths (envFolder == "")
-	prodPaths, err := configPathCandidatesForEnvFolder(app, filename, "")
-	if err != nil {
-		return nil, err
-	}
-
-	// Merge unique, preserve order
-	seen := map[string]bool{}
-	out := make([]string, 0, len(envPaths)+len(prodPaths))
-	for _, p := range envPaths {
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
-	}
-	for _, p := range prodPaths {
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
+	var out T
+	if err := json.Unmarshal(b, &out); err != nil {
+		return zero, fmt.Errorf("unmarshal json: %w", err)
 	}
 	return out, nil
 }

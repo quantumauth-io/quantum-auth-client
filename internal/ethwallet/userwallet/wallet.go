@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/securefile"
 )
 
@@ -71,7 +72,7 @@ func (w *Wallet) SignHash(ctx context.Context, digest32 []byte) ([]byte, error) 
 
 // NewStore sets up a wallet store at the canonical config path.
 func NewStore() (*Store, error) {
-	paths, err := securefile.ConfigPathCandidates(AppName, WalletFile)
+	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.WalletFile)
 	if err != nil {
 		return nil, err
 	}

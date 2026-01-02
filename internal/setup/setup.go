@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/quantumauth-io/quantum-auth-client/internal/assets"
 
 	clientconfig "github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
 	"github.com/quantumauth-io/quantum-auth-client/internal/eth"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/contractwallet"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/ethdevice"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/userwallet"
-	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/wtypes"
 	clienthttp "github.com/quantumauth-io/quantum-auth-client/internal/http"
 	"github.com/quantumauth-io/quantum-auth-client/internal/login"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
@@ -50,6 +50,11 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 	cfg.EthNetworks.Normalize()
+	err = cfg.NormalizeDefaultAssets()
+	if err != nil {
+		log.Error("normailze default assets", "error", err)
+		return err
+	}
 
 	if err := cfg.InjectInfuraKeyFromEnv(); err != nil {
 		return err
@@ -107,6 +112,17 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 
+	// ---- Assets Manager
+	assetsManager, err := assets.NewManager(ethClient)
+	if err != nil {
+		return err
+	}
+
+	defaultAssets := cfg.DefaultAssets.Network["sepolia"]
+	if err := assetsManager.EnsureStoreForNetwork(ctx, "sepolia", defaultAssets); err != nil {
+		return err
+	}
+
 	// ---- Validate EntryPoint from config (once)
 	activeNetName := cfg.EthNetworks.ActiveNetwork
 	netCfg, ok := cfg.EthNetworks.Networks[activeNetName]
@@ -120,8 +136,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return fmt.Errorf("invalid entryPoint %q for network %q", netCfg.EntryPoint, activeNetName)
 	}
 	entryPoint := common.HexToAddress(netCfg.EntryPoint)
-
-	log.Info("quantum-auth-client", "entryPoint", entryPoint)
 
 	code, err := ethClient.GetCode(ctx, entryPoint.Hex(), utilsEth.BlockLatest)
 	if err != nil {
@@ -143,7 +157,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 
 	log.Info("user wallet", "address", userW.Address())
 
-	sealer := tpmdevice.NewSealer("") // owner auth usually ""
+	sealer := tpmdevice.NewSealer("")
 	dwStore, err := ethdevice.NewStore(sealer)
 	if err != nil {
 		return err
@@ -152,8 +166,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err != nil {
 		return err
 	}
-
-	log.Info("device wallet", "address", deviceW.Address())
 
 	// ---- Contract store + chain id
 	cwStore, err := contractwallet.NewStore()
@@ -170,65 +182,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	contractCfg, err := cwStore.LoadForChain(chainID)
 	if errors.Is(err, contractwallet.ErrContractNotConfigured) {
 		log.Warn("contract not configured", "path", cwStore.Path, "chain_id", chainID)
-
-		deploy, perr := promptYesNo("No AA wallet contract found for this chain. Deploy TPMVerifier + QuantumAuthAccount now? (fund your wallet first) (y/N): ")
-		if perr != nil {
-			return perr
-		}
-
-		if deploy {
-			// ---- Deploy TPMVerifier
-			tpmVerifierAddr, tpmTx, derr := contractwallet.DeployTPMVerifierSecp256k1(ctx, ethClient, userW)
-			if derr != nil {
-				return derr
-			}
-			log.Info("TPMVerifier deployed", "address", tpmVerifierAddr.Hex(), "tx", tpmTx.Hex())
-
-			// ---- TPM Key ID (must be [32]byte)
-			// NOTE: this requires your device wallet type to implement wtypes.TPMBackedWallet.
-			// If you can add TPMKeyID() directly on *ethdevice.DeviceWallet, then you can call deviceW.TPMKeyID() here.
-			var deviceWalletIface wtypes.Wallet = deviceW
-			tpmWallet, ok := deviceWalletIface.(wtypes.TPMBackedWallet)
-			if !ok {
-				return fmt.Errorf("device wallet is not TPM-backed (missing TPMKeyID())")
-			}
-			tpmKeyID := tpmWallet.TPMKeyID()
-
-			// ---- Deploy QuantumAuthAccount
-			// IMPORTANT: EOA2 should be a real recovery EOA (not the TPM device wallet) if you want recovery mode to work.
-			params := contractwallet.AccountDeployParams{
-				EntryPoint:  entryPoint,
-				EOA1:        userW.Address(),
-				EOA2:        deviceW.Address(),
-				TPMVerifier: tpmVerifierAddr,
-				TPMKeyID:    tpmKeyID,
-			}
-
-			accountAddr, deployTxHash, derr := contractwallet.DeployQuantumAuthAccount(ctx, ethClient, userW, params)
-			if derr != nil {
-				return derr
-			}
-
-			if err := cwStore.SaveForChain(contractwallet.Config{
-				ChainID:     chainID,
-				Address:     accountAddr.Hex(),
-				EntryPoint:  entryPoint.Hex(),
-				TPMVerifier: tpmVerifierAddr.Hex(),
-			}); err != nil {
-				return err
-			}
-
-			log.Info("QuantumAuthAccount deployed",
-				"address", accountAddr.Hex(),
-				"tx", deployTxHash.Hex(),
-				"chain_id", chainID,
-				"path", cwStore.Path,
-			)
-
-			contractCfg = &contractwallet.Config{ChainID: chainID, Address: accountAddr.Hex()}
-		} else {
-			contractCfg = nil
-		}
+		contractCfg = nil
 	} else if err != nil {
 		return err
 	}
@@ -244,21 +198,33 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err != nil {
 		return err
 	}
-	dbalance, err := onchain.BalanceOf(ctx, deviceW.Address())
+	_, err = onchain.BalanceOf(ctx, deviceW.Address())
 	if err != nil {
 		return err
 	}
 	log.Info("User wallet", "address", userW.Address().Hex(), "balance", ubalance.String())
-	log.Info("Device wallet", "address", deviceW.Address().Hex(), "balance", dbalance.String())
 
 	// ---- HTTP server
-	handler, err := clienthttp.NewServer(ctx, qaClient, authClient, allowedOrigins, ethClient, onchain, cfg.EthNetworks)
+	srv, err := clienthttp.NewServer(ctx, qaClient, authClient, allowedOrigins, ethClient, onchain, cfg, assetsManager, cwStore)
 	if err != nil {
 		return err
 	}
 
+	// contract deployer service
+	deployer, err := contractwallet.NewContractDeployer(contractwallet.DeployerConfig{
+		EthClient: ethClient,
+		Store:     cwStore,
+		Wallets:   clienthttp.StaticWalletProvider{User: userW, Device: deviceW},
+		// leave nil; server will attach
+	})
+	if err != nil {
+		return err
+	}
+
+	srv.AttachDeployer(deployer)
+
 	listenAddr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)
-	server := &http.Server{Addr: listenAddr, Handler: handler}
+	server := &http.Server{Addr: listenAddr, Handler: srv}
 
 	go func() {
 		if serr := server.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/wtypes"
 	"github.com/quantumauth-io/quantum-auth-client/internal/securefile"
 	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
@@ -70,7 +71,7 @@ func (r *Runtime) Ready() error {
 }
 
 func NewStore() (*Store, error) {
-	paths, err := securefile.ConfigPathCandidates(AppName, ContractFile)
+	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.ContractFile)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +137,30 @@ func (s *Store) LoadAll() (map[uint64]Config, error) {
 			TPMVerifier: "",
 		},
 	}, nil
+}
+
+func (r *Runtime) LoadContractForCurrentChain(ctx context.Context, store *Store) error {
+	if store == nil {
+		r.Contract = nil
+		return nil
+	}
+
+	chainID, err := r.Eth.ChainID(ctx)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := store.LoadForChain(chainID.Uint64())
+	if err != nil {
+		if errors.Is(err, ErrContractNotConfigured) {
+			r.Contract = nil
+			return nil
+		}
+		return err
+	}
+
+	r.Contract = cfg
+	return nil
 }
 
 func (s *Store) SaveForChain(cfg Config) error {

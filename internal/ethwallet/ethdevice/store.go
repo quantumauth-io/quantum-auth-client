@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/securefile"
 	"github.com/quantumauth-io/quantum-go-utils/tpmdevice"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -89,7 +90,7 @@ func NewStore(sealer tpmdevice.Sealer) (*Store, error) {
 	if sealer == nil {
 		return nil, errors.New("ethdevice: sealer is required")
 	}
-	paths, err := securefile.ConfigPathCandidates(AppName, DeviceFileName)
+	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.DeviceFileName)
 	if err != nil {
 		return nil, err
 	}

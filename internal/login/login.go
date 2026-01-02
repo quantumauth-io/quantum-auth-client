@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/ethdevice"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/userwallet"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
@@ -83,7 +84,7 @@ func NewQAClientLoginService(
 // EnsureLogin is called on client startup.
 // It only prompts for a password if an existing identity file is found.
 func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
-	paths, err := securefile.ConfigPathCandidates("quantumauth", "client_identity.json")
+	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.ClientIdentityFile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -128,7 +129,7 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 
 // EnsureLogin is called on client startup.
 func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []byte, error) {
-	paths, err := securefile.ConfigPathCandidates("quantumauth", "client_identity.json")
+	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.ClientIdentityFile)
 	if err != nil {
 		return nil, nil, err
 	}

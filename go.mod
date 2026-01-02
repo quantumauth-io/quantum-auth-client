@@ -6,7 +6,7 @@ require (
 	github.com/cloudflare/circl v1.6.2
 	github.com/ethereum/go-ethereum v1.16.7
 	github.com/google/uuid v1.6.0
-	github.com/quantumauth-io/quantum-go-utils v0.0.26
+	github.com/quantumauth-io/quantum-go-utils v0.0.28
 	golang.org/x/crypto v0.46.0
 	golang.org/x/term v0.38.0
 )

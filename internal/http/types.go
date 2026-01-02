@@ -1,15 +1,21 @@
 package http
 
 import (
-	"encoding/hex"
+	"context"
 	"encoding/json"
-	"fmt"
 	"math/big"
-	"strings"
+	"net/http"
+	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
+	"github.com/quantumauth-io/quantum-auth-client/internal/assets"
+	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/contractwallet"
+	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/wtypes"
+	"github.com/quantumauth-io/quantum-auth-client/internal/login"
+	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
+	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
 )
 
 type corsPolicy struct {
@@ -72,12 +78,6 @@ type pairExchangeResp struct {
 	Header string `json:"header"`
 }
 
-type rpcErr struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
 type walletRPCReq struct {
 	Origin string `json:"origin"`
 	Method string `json:"method"`
@@ -93,33 +93,17 @@ type walletSwitchChainReq struct {
 	ChainIDHex string `json:"chainIdHex"` // "0x..."
 }
 
-type walletSendTxReq struct {
-	Tx walletTxParams `json:"tx"`
-}
-
-type walletTxParams struct {
-	From                 string `json:"from"`
-	To                   string `json:"to,omitempty"`
-	Gas                  string `json:"gas,omitempty"`                  // hex qty
-	GasPrice             string `json:"gasPrice,omitempty"`             // hex qty
-	MaxFeePerGas         string `json:"maxFeePerGas,omitempty"`         // hex qty
-	MaxPriorityFeePerGas string `json:"maxPriorityFeePerGas,omitempty"` // hex qty
-	Value                string `json:"value,omitempty"`                // hex qty
-	Data                 string `json:"data,omitempty"`                 // 0x...
-	Nonce                string `json:"nonce,omitempty"`                // hex qty
-}
-
 type walletPersonalSignReq struct {
+	Origin  string `json:"origin"`
 	Address string `json:"address"` // signer address
 	Message string `json:"message"` // usually hex or utf8; we support both
 }
 
 type walletSignTypedDataReq struct {
-	Address   string `json:"address"`
-	TypedData string `json:"typedData"` // JSON string (EIP-712 typed data)
+	Origin        string `json:"origin"`
+	Address       string `json:"address"`
+	TypedDataJson string `json:"typedDataJson"`
 }
-
-// --- Network list response types ---
 
 type networkItem struct {
 	ChainIDHex string `json:"chainIdHex"`
@@ -168,96 +152,117 @@ type UserOperation struct {
 	Signature            []byte         `json:"signature"`
 }
 
-func parseHexQuantity(s string) (*big.Int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-		s = s[2:]
-	}
-	if s == "" {
-		return big.NewInt(0), nil
-	}
-	n := new(big.Int)
-	_, ok := n.SetString(s, 16)
-	if !ok {
-		return nil, fmt.Errorf("invalid hex quantity: %q", s)
-	}
-	return n, nil
+type assetOut struct {
+	Address      string `json:"address"` // 0x... or native addr
+	Symbol       string `json:"symbol"`
+	Decimals     uint8  `json:"decimals"`
+	Name         string `json:"name,omitempty"`
+	BalanceWei   string `json:"balanceWei"`   // ERC20 raw units, or wei for native
+	BalanceHuman string `json:"balanceHuman"` // trimmed string for UI
+	LogoURI      string `json:"logoUri,omitempty"`
+}
+type EstimateSendTxResponse struct {
+	// EIP-1559
+	BaseFeeWei         string `json:"baseFeeWei"`
+	BaseFeeGwei        string `json:"baseFeeGwei"`
+	MaxPriorityFeeWei  string `json:"maxPriorityFeePerGasWei"`
+	MaxPriorityFeeGwei string `json:"maxPriorityFeePerGasGwei"`
+	MaxFeeWei          string `json:"maxFeePerGasWei"`
+	MaxFeeGwei         string `json:"maxFeeGwei"`
+
+	// AA gas fields (4337)
+	CallGasLimit         string `json:"callGasLimit"`         // decimal
+	VerificationGasLimit string `json:"verificationGasLimit"` // decimal
+	PreVerificationGas   string `json:"preVerificationGas"`   // decimal
+
+	// Packed fields (what you already use)
+	AccountGasLimitsHex string `json:"accountGasLimitsHex"`
+	GasFeesHex          string `json:"gasFeesHex"`
+
+	// Optional convenience
+	EstimatedTotalGas string `json:"estimatedTotalGas"` // call + verification + pre
 }
 
-func parseAddr(s string) (common.Address, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return common.Address{}, fmt.Errorf("missing address")
-	}
-	if !common.IsHexAddress(s) {
-		return common.Address{}, fmt.Errorf("invalid address: %q", s)
-	}
-	return common.HexToAddress(s), nil
+type txReceiptRequest struct {
+	TxHash   string   `json:"txHash,omitempty"`
+	TxHashes []string `json:"txHashes,omitempty"`
 }
 
-func parseHexData(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-		s = s[2:]
-	}
-	if len(s)%2 != 0 {
-		return nil, fmt.Errorf("invalid hex data length")
-	}
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		return nil, fmt.Errorf("invalid hex data: %w", err)
-	}
-	return b, nil
+type txReceiptResult struct {
+	TxHash         string `json:"txHash"`
+	Found          bool   `json:"found"`                   // true when mined (receipt exists)
+	Status         string `json:"status"`                  // "pending" | "confirmed" | "failed"
+	ReceiptStatus  uint64 `json:"receiptStatus,omitempty"` // 0 or 1 when Found
+	BlockNumberHex string `json:"blockNumberHex,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
-// personal_sign often sends message as hex bytes. If it isn't hex, treat as utf8.
-func parsePersonalSignMessage(msg string) ([]byte, error) {
-	m := strings.TrimSpace(msg)
-	if strings.HasPrefix(m, "0x") || strings.HasPrefix(m, "0X") {
-		return parseHexData(m)
-	}
-	return []byte(m), nil
+type txReceiptResponse struct {
+	OK    bool                       `json:"ok"`
+	Error string                     `json:"error,omitempty"`
+	Data  map[string]txReceiptResult `json:"data,omitempty"` // keyed by txHash
 }
 
-func mustHexBytes(s string) []byte {
-	s = strings.TrimPrefix(s, "0x")
-	if s == "" {
-		return []byte{}
-	}
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		panic(err)
-	}
-	return b
+type Server struct {
+	qaClient   *qa.Client
+	authClient *login.QAClientLoginService
+	mux        *http.ServeMux
+	ethClient  *utilsEth.Client
+
+	agentSessionToken string
+	uiAllowedOrigins  map[string]struct{}
+
+	perms            *PermissionStore
+	pairingTokenPath string
+
+	pairings      map[string]*Pairing
+	pairingsMu    sync.Mutex
+	ctx           context.Context
+	onChain       *contractwallet.Runtime
+	cfg           *config.Config
+	assetsManager *assets.Manager
+	cwStore       *contractwallet.Store
+	deployer      *contractwallet.ContractDeployer
 }
 
-func mustHexBig(s string) *big.Int {
-	s = strings.TrimPrefix(s, "0x")
-	if s == "" {
-		return big.NewInt(0)
-	}
-	n := new(big.Int)
-	n.SetString(s, 16)
-	return n
+type StaticWalletProvider struct {
+	User   wtypes.Wallet
+	Device wtypes.Wallet
 }
 
-func packExecuteCall(accountABI abi.ABI, to common.Address, value *big.Int, data []byte) ([]byte, error) {
-	return accountABI.Pack("execute", to, value, data)
+type rpcErr struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
-func packU128Pair(low, high *big.Int) [32]byte {
-	// packs two uint128 into 32 bytes: (high << 128) | low
-	out := [32]byte{}
-	x := new(big.Int).Set(high)
-	x.Lsh(x, 128)
-	x.Or(x, new(big.Int).Set(low))
-	b := x.FillBytes(make([]byte, 32))
-	copy(out[:], b)
-	return out
+type acctOut struct {
+	Address    string `json:"address"`
+	Role       string `json:"role"`
+	BalanceWei string `json:"balanceWei"`
+	BalanceEth string `json:"balanceEth"`
+	Symbol     string `json:"symbol"`
+}
+
+type acctIn struct {
+	Addr common.Address
+	Role string
+}
+
+type agentStatusResponse struct {
+	OK       bool   `json:"ok"`
+	LoggedIn bool   `json:"loggedIn"`
+	UserID   string `json:"userId,omitempty"`
+	DeviceID string `json:"deviceId,omitempty"`
+}
+
+type deployAARequest struct {
+	ChainIDHex string `json:"chainIdHex"`
+}
+
+// Response shape (wraps your deployer result).
+type deployAAResponse struct {
+	OK   bool                           `json:"ok"`
+	Data *contractwallet.AADeployResult `json:"data,omitempty"`
+	Err  string                         `json:"error,omitempty"`
 }

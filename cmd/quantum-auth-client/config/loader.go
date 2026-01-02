@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	utilsconfig "github.com/quantumauth-io/quantum-go-utils/config"
 	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
 )
@@ -20,9 +21,13 @@ type ClientSettings struct {
 	Email       string
 }
 
+type DefaultAssetsConfig struct {
+	Network map[string][]string `yaml:"Network" json:"network"`
+}
 type Config struct {
 	ClientSettings *ClientSettings
 	EthNetworks    *utilsEth.MultiConfig `mapstructure:"Ethereum"`
+	DefaultAssets  DefaultAssetsConfig   `yaml:"DefaultAssets" json:"defaultAssets"`
 }
 
 func Load() (*Config, error) {
@@ -103,5 +108,53 @@ func (c *Config) ApplyServerURLFromEnv() error {
 		return fmt.Errorf("invalid QA_ENV %q (allowed: local, develop, empty)", raw)
 	}
 
+	return nil
+}
+
+func (c *Config) NormalizeDefaultAssets() error {
+	if c.DefaultAssets.Network == nil {
+		c.DefaultAssets.Network = map[string][]string{}
+		return nil
+	}
+
+	outByNet := make(map[string][]string, len(c.DefaultAssets.Network))
+
+	for netKey, addrs := range c.DefaultAssets.Network {
+		nk := strings.ToLower(strings.TrimSpace(netKey))
+		if nk == "" {
+			return fmt.Errorf("DefaultAssets.Network has empty network key")
+		}
+
+		seen := map[string]struct{}{}
+		out := make([]string, 0, len(addrs))
+
+		for _, raw := range addrs {
+			a := strings.TrimSpace(raw)
+			if a == "" {
+				return fmt.Errorf("DefaultAssets.Network[%q] contains empty address", netKey)
+			}
+			if !strings.HasPrefix(a, "0x") && !strings.HasPrefix(a, "0X") {
+				a = "0x" + a
+			}
+			a = strings.ToLower(a)
+
+			if !common.IsHexAddress(a) {
+				return fmt.Errorf("DefaultAssets.Network[%q] invalid address: %q", netKey, raw)
+			}
+
+			// canonical form: checksummed hex string
+			canon := common.HexToAddress(a).Hex()
+
+			if _, ok := seen[canon]; ok {
+				continue
+			}
+			seen[canon] = struct{}{}
+			out = append(out, canon)
+		}
+
+		outByNet[nk] = out
+	}
+
+	c.DefaultAssets.Network = outByNet
 	return nil
 }
