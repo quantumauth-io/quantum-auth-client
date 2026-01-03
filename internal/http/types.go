@@ -260,7 +260,8 @@ type agentStatusResponse struct {
 }
 
 type deployAARequest struct {
-	ChainIDHex string `json:"chainIdHex"`
+	ChainIDHex      string `json:"chainIdHex"`
+	RecoveryAddress string `json:"recoveryAddress"`
 }
 
 // Response shape (wraps your deployer result).

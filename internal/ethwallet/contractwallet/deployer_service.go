@@ -87,7 +87,7 @@ func NewContractDeployer(cfg DeployerConfig) (*ContractDeployer, error) {
 	}, nil
 }
 
-func (d *ContractDeployer) DeployAAOnChainIDHex(ctx context.Context, chainIDHex string) (*AADeployResult, error) {
+func (d *ContractDeployer) DeployAAOnChainIDHex(ctx context.Context, chainIDHex string, recoveryAddress string) (*AADeployResult, error) {
 	if d == nil {
 		return nil, fmt.Errorf("deploy: nil deployer")
 	}
@@ -100,6 +100,12 @@ func (d *ContractDeployer) DeployAAOnChainIDHex(ctx context.Context, chainIDHex 
 	if d.eth == nil || d.store == nil || d.wallets == nil {
 		return nil, fmt.Errorf("deploy: deployer not initialized (missing eth/store/wallets)")
 	}
+
+	if !common.IsHexAddress(recoveryAddress) {
+		return nil, fmt.Errorf("invalid recovery address: %q", recoveryAddress)
+	}
+
+	recoveryAddr := common.HexToAddress(recoveryAddress)
 
 	want := utilsEth.NormalizeHex0x(strings.TrimSpace(chainIDHex))
 	if want == "" {
@@ -169,7 +175,7 @@ func (d *ContractDeployer) DeployAAOnChainIDHex(ctx context.Context, chainIDHex 
 	params := AccountDeployParams{
 		EntryPoint:  entryPoint,
 		EOA1:        userW.Address(),
-		EOA2:        deviceW.Address(),
+		EOA2:        recoveryAddr, // TODO Implement the recovery method. we never asked for a private key for this account.
 		TPMVerifier: tpmVerifierAddr,
 		TPMKeyID:    tpmKeyID,
 	}

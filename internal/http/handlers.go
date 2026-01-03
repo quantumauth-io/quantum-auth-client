@@ -382,13 +382,18 @@ func (s *Server) handleWalletAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts = append(accounts, s.onChain.User.Address().Hex())
 	accounts = append(accounts, s.onChain.Device.Address().Hex())
 
+	// AA account: always return *something* (zero address when not deployed)
+	contractAddr := (common.Address{})
+
 	if s.onChain.Contract != nil {
 		if ca, err := s.onChain.ContractAddress(); err == nil && ca != (common.Address{}) {
-			accounts = append(accounts, ca.Hex())
+			contractAddr = ca
 		} else if addr := strings.TrimSpace(s.onChain.Contract.Address); addr != "" {
-			accounts = append(accounts, common.HexToAddress(addr).Hex())
+			contractAddr = common.HexToAddress(addr)
 		}
 	}
+
+	accounts = append(accounts, contractAddr.Hex())
 
 	accounts = uniqueStrings(accounts)
 
@@ -491,11 +496,6 @@ func (s *Server) handleSendViaAA(w http.ResponseWriter, r *http.Request, req Sen
 	ep, err := entrypoint.NewEntryPoint(entryPointAddr, s.ethClient.Backend())
 	if err != nil {
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletBindEntryPointFailedText, err.Error())
-		return
-	}
-
-	if !decodeJSONBodyRPC(w, r, &req) {
-		// decodeJSONBodyRPC already wrote error
 		return
 	}
 
@@ -1010,16 +1010,28 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	err = s.onChain.LoadContractForCurrentChain(s.ctx, s.cwStore)
+	if err != nil {
+		return
+	}
+
 	accts := []acctIn{
 		{Addr: s.onChain.User.Address(), Role: "user (EOA)"},
 		{Addr: s.onChain.Device.Address(), Role: "device (TPM)"},
 	}
 
+	// Always return the AA contract row (zero address when not deployed)
+	contractAddr := (common.Address{})
+
 	if s.onChain.Contract != nil {
-		if ca, err := s.onChain.ContractAddress(); err == nil && (ca != common.Address{}) {
-			accts = append(accts, acctIn{Addr: ca, Role: "contract"})
+		if ca, err := s.onChain.ContractAddress(); err == nil && ca != (common.Address{}) {
+			contractAddr = ca
+		} else if addr := strings.TrimSpace(s.onChain.Contract.Address); addr != "" {
+			contractAddr = common.HexToAddress(addr)
 		}
 	}
+
+	accts = append(accts, acctIn{Addr: contractAddr, Role: "contract"})
 
 	out := make([]acctOut, 0, len(accts))
 	for _, a := range accts {
@@ -1140,7 +1152,7 @@ func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	res, err := s.deployer.DeployAAOnChainIDHex(r.Context(), req.ChainIDHex)
+	res, err := s.deployer.DeployAAOnChainIDHex(r.Context(), req.ChainIDHex, req.RecoveryAddress)
 	if err != nil {
 		// Use 502 if this is typically upstream/rpc related; otherwise 500 is fine.
 		writeJSON(w, http.StatusInternalServerError, deployAAResponse{
