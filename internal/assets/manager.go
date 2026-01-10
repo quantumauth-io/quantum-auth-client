@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/v2"
 	"github.com/ethereum/go-ethereum/common"
@@ -17,9 +18,10 @@ import (
 )
 
 type Manager struct {
-	path    string
-	clients *ethrpc.Client
-	store   Store
+	path       string
+	clients    *ethrpc.Client
+	store      Store
+	fetchDelay time.Duration
 }
 
 // NewManager resolves assets.json path using securefile.ConfigPathCandidates.
@@ -41,6 +43,7 @@ func NewManager(clients *ethrpc.Client) (*Manager, error) {
 			Schema:   constants.SchemaV1,
 			Networks: map[string]map[string]Asset{},
 		},
+		fetchDelay: 500 * time.Millisecond,
 	}
 	return m, nil
 }
@@ -172,6 +175,14 @@ func (m *Manager) EnsureStoreForNetwork(ctx context.Context, network string, def
 		// already present? skip
 		if _, ok := m.store.Networks[nk][addr]; ok {
 			continue
+		}
+
+		if m.fetchDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(m.fetchDelay):
+			}
 		}
 
 		a, err := m.fetchAsset(ctx, nk, addr)

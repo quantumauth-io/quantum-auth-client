@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/quantumauth-io/quantum-auth-client/internal/assets"
+	"github.com/quantumauth-io/quantum-auth-client/internal/networks"
 
 	clientconfig "github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
 	"github.com/quantumauth-io/quantum-auth-client/internal/eth"
@@ -29,6 +30,10 @@ import (
 var allowedOrigins = []string{
 	"http://127.0.0.1:6137",
 	"http://localhost:6137",
+}
+
+type TPMKeyRef struct {
+	HandleHex string `json:"handle_hex"`
 }
 
 type BuildInfo struct {
@@ -63,9 +68,10 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 
-	// ---- TPM runtime
+	// ---- TPM runtime (handles read/pick/persist internally)
 	tpmClient, err := clienttpm.NewRuntimeTPM(ctx)
 	if err != nil {
+		log.Error("TPM init failed", "error", err)
 		return err
 	}
 	defer func() {
@@ -74,6 +80,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 		}
 	}()
 
+	log.Info("TPM ready", "handle", fmt.Sprintf("0x%x", uint32(tpmClient.Handle())))
 	// ---- QA client
 	qaClient, err := qa.NewClient(cfg.ClientSettings.ServerURL, tpmClient)
 	if err != nil {
@@ -118,11 +125,24 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 
-	defaultAssets := cfg.DefaultAssets.Network["sepolia"]
-	if err := assetsManager.EnsureStoreForNetwork(ctx, "sepolia", defaultAssets); err != nil {
+	for netKey, addrs := range cfg.DefaultAssets.Network {
+		if err := assetsManager.EnsureStoreForNetwork(ctx, netKey, addrs); err != nil {
+			return err
+		}
+	}
+
+	// ---- Networks Manager
+	netMgr, err := networks.NewManager()
+	if err != nil {
 		return err
 	}
 
+	defaults := networksFromConfig(cfg)
+
+	// This will create networks.json on first run and merge-add new config networks later.
+	if err := netMgr.EnsureFromConfig(ctx, defaults); err != nil {
+		return err
+	}
 	// ---- Validate EntryPoint from config (once)
 	activeNetName := cfg.EthNetworks.ActiveNetwork
 	netCfg, ok := cfg.EthNetworks.Networks[activeNetName]

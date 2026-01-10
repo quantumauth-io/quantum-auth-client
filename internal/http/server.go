@@ -134,6 +134,13 @@ func NewServer(ctx context.Context, qaClient *qa.Client, authState *login.QAClie
 	s.mux.HandleFunc("/wallet/accounts/summary", s.withExtensionPairedGuards(s.handleWalletAccountsSummaryHTTP))
 	s.mux.HandleFunc("/wallet/networks", s.withExtensionPairedGuards(s.handleWalletNetworksHTTP))
 	s.mux.HandleFunc("/wallet/network", s.withExtensionPairedGuards(s.handleWalletSetNetworkHTTP))
+	s.mux.HandleFunc("/wallet/networks/remove", s.withExtensionPairedGuards(s.handleWalletRemoveNetworkHTTP))
+	s.mux.HandleFunc("/wallet/networks/update", s.withExtensionPairedGuards(s.handleWalletUpdateNetworkHTTP))
+
+	s.mux.HandleFunc("/wallet/assets/list", s.withExtensionPairedGuards(s.handleWalletListAssetsHTTP))
+	s.mux.HandleFunc("/wallet/assets/add", s.withExtensionPairedGuards(s.handleWalletAddAssetHTTP))
+	s.mux.HandleFunc("/wallet/assets/remove", s.withExtensionPairedGuards(s.handleWalletRemoveAssetHTTP))
+	s.mux.HandleFunc("/wallet/assets/metadata", s.withExtensionPairedGuards(s.handleWalletAssetMetadataHTTP))
 
 	s.mux.HandleFunc("/wallet/deployAA", s.withExtensionPairedGuards(s.handleDeployContractOnChainHTTP))
 
@@ -354,4 +361,28 @@ func (s *Server) handleWalletSetNetworkHTTP(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleDeployContractOnChainHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleDeployContractOnChain)(w, r)
+}
+
+func (s *Server) handleWalletRemoveNetworkHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletRemoveNetwork)(w, r)
+}
+
+func (s *Server) handleWalletUpdateNetworkHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletUpdateNetwork)(w, r)
+}
+
+func (s *Server) handleWalletListAssetsHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletListAssets)(w, r)
+}
+
+func (s *Server) handleWalletAddAssetHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletAddAsset)(w, r)
+}
+
+func (s *Server) handleWalletRemoveAssetHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletRemoveAsset)(w, r)
+}
+
+func (s *Server) handleWalletAssetMetadataHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletAssetMetadata)(w, r)
 }

@@ -22,4 +22,6 @@ const (
 
 	// AAD for payload encryption (must match on decrypt).
 	PayloadAAD = "quantumauth:ethdevice:payload:v1"
+
+	NetworksFile = "networks.json"
 )

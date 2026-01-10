@@ -3,7 +3,6 @@ package assets
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -27,8 +26,41 @@ func (m *Manager) fetchAsset(ctx context.Context, network string, addr string) (
 		}, nil
 	}
 
-	backend := m.backendForNetwork(network) // <-- you implement; must return bind.ContractBackend
+	if m.clients == nil {
+		return Asset{}, fmt.Errorf("eth client is nil")
+	}
+
+	// --- STARTUP-SAFE NETWORK SWITCH ---
+	// NOTE: This mutates the shared client's active network/backend,
+	// so only do this during startup (single-threaded), not in concurrent handlers.
+	prevNet := m.clients.ActiveNetwork()
+	prevRPC := m.clients.ActiveRPC()
+
+	restore := func() {
+		// best-effort restore
+		_ = m.clients.UseNetwork(prevNet)
+		if prevRPC != "" {
+			_ = m.clients.UseRPC(prevRPC)
+		}
+		_ = m.clients.EnsureBackend(ctx)
+	}
+
+	// switch to target network
+	if err := m.clients.UseNetwork(network); err != nil {
+		return Asset{}, fmt.Errorf("use network %q: %w", network, err)
+	}
+	// keep previous rpc name if possible (best effort); otherwise UseNetwork chose first available
+	if prevRPC != "" {
+		_ = m.clients.UseRPC(prevRPC)
+	}
+	if err := m.clients.EnsureBackend(ctx); err != nil {
+		restore()
+		return Asset{}, fmt.Errorf("ensure backend for %q: %w", network, err)
+	}
+
+	backend := m.clients.Backend()
 	if backend == nil {
+		restore()
 		return Asset{}, fmt.Errorf("no backend for network %q", network)
 	}
 
@@ -37,16 +69,19 @@ func (m *Manager) fetchAsset(ctx context.Context, network string, addr string) (
 
 	token, err := qaerc20.NewQAERC20(contractAddr, backend)
 	if err != nil {
+		restore()
 		return Asset{}, fmt.Errorf("qaerc20 bind: %w", err)
 	}
 
 	sym, err := token.Symbol(call)
 	if err != nil {
+		restore()
 		return Asset{}, fmt.Errorf("symbol: %w", err)
 	}
 
 	dec, err := token.Decimals(call)
 	if err != nil {
+		restore()
 		return Asset{}, fmt.Errorf("decimals: %w", err)
 	}
 
@@ -57,19 +92,19 @@ func (m *Manager) fetchAsset(ctx context.Context, network string, addr string) (
 
 	// (optional) sanity check for weird tokens
 	if dec > 255 {
+		restore()
 		return Asset{}, fmt.Errorf("decimals out of range: %d", dec)
 	}
 
-	return Asset{
+	out := Asset{
 		Address:  contractAddr.Hex(),
 		Symbol:   sym,
 		Decimals: uint8(dec),
 		Name:     name,
-	}, nil
+	}
+
+	// restore original active network/rpc/backend
+	restore()
+
+	return out, nil
 }
-
-// --- OPTIONAL: if you want balance too (ERC20) ---
-// balance, err := token.BalanceOf(call, ownerAddr)
-// returns *big.Int
-
-func big0() *big.Int { return new(big.Int) }

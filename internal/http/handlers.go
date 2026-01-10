@@ -1167,3 +1167,78 @@ func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Requ
 		Data: res,
 	})
 }
+
+func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Request) {
+	var req removeNetworkReq
+	if !decodeJSONBody(w, r, &req) {
+		// decodeJSONBody already wrote error
+		return
+	}
+
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		JSONKeyOK:    false,
+		JSONKeyError: "not implemented",
+	})
+}
+
+func (s *Server) handleWalletUpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	var req updateNetworkReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		JSONKeyOK:    false,
+		JSONKeyError: "not implemented",
+	})
+}
+
+func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) {
+	var req listAssetsReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	// Your UI expects BusResp<AssetRow[]> where data is an array.
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK:   true,
+		JSONKeyData: []any{},
+	})
+}
+
+func (s *Server) handleWalletAddAsset(w http.ResponseWriter, r *http.Request) {
+	var req addAssetReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		JSONKeyOK:    false,
+		JSONKeyError: "not implemented",
+	})
+}
+
+func (s *Server) handleWalletRemoveAsset(w http.ResponseWriter, r *http.Request) {
+	var req removeAssetReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		JSONKeyOK:    false,
+		JSONKeyError: "not implemented",
+	})
+}
+
+func (s *Server) handleWalletAssetMetadata(w http.ResponseWriter, r *http.Request) {
+	var req assetMetadataReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	// Your extension normalizer treats ok=false as failure.
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		JSONKeyOK:    false,
+		JSONKeyError: "not implemented",
+	})
+}

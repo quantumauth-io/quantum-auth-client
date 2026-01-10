@@ -270,3 +270,31 @@ type deployAAResponse struct {
 	Data *contractwallet.AADeployResult `json:"data,omitempty"`
 	Err  string                         `json:"error,omitempty"`
 }
+
+type removeNetworkReq struct {
+	ChainIdHex string `json:"chainIdHex"`
+}
+
+type updateNetworkReq struct {
+	ChainIdHex string                 `json:"chainIdHex"`
+	Patch      map[string]interface{} `json:"patch"`
+}
+
+type listAssetsReq struct {
+	NetworkName string `json:"networkName"`
+}
+
+type addAssetReq struct {
+	NetworkName string `json:"networkName"`
+	Address     string `json:"address"`
+}
+
+type removeAssetReq struct {
+	NetworkName string `json:"networkName"`
+	Address     string `json:"address"`
+}
+
+type assetMetadataReq struct {
+	ChainIdHex string `json:"chainIdHex"`
+	Address    string `json:"address"`
+}
