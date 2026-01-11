@@ -12,7 +12,7 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/contracts/bindings/go/qaerc20"
 )
 
-func (m *Manager) fetchAsset(ctx context.Context, network string, addr string) (Asset, error) {
+func (m *Manager) FetchAsset(ctx context.Context, network string, addr string) (Asset, error) {
 	a := common.HexToAddress(addr).Hex() // normalize
 	native := common.HexToAddress(constants.NativeAddr).Hex()
 

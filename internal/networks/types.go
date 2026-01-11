@@ -1,28 +1,37 @@
 package networks
 
-import "github.com/quantumauth-io/quantum-auth-client/internal/constants"
+import (
+	"encoding/json"
 
-type Network struct {
-	Name       string `json:"name"`
-	ChainId    int64  `json:"chainId,omitempty"`
-	ChainIdHex string `json:"chainIdHex"`
-	Explorer   string `json:"explorer,omitempty"`
-
-	// This is what the UI edits today.
-	RpcUrl string `json:"rpcUrl,omitempty"`
-
-	// Optional future-proofing (not required by UI yet)
-	EntryPoint string `json:"entryPoint,omitempty"`
-}
+	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
+	"github.com/quantumauth-io/quantum-auth-client/internal/shared"
+)
 
 type Store struct {
-	Schema   int                `json:"schema"`
-	Networks map[string]Network `json:"networks"` // key = normalized name
+	Schema   int                       `json:"schema"`
+	Networks map[string]shared.Network `json:"networks"` // key = normalized name
+}
+
+type rpcReq struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      int         `json:"id"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params"`
+}
+
+type rpcResp struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int             `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
 func NewEmptyStore() Store {
 	return Store{
 		Schema:   constants.SchemaV1,
-		Networks: map[string]Network{},
+		Networks: map[string]shared.Network{},
 	}
 }

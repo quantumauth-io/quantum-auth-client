@@ -18,6 +18,7 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/contractwallet"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/wtypes"
 	"github.com/quantumauth-io/quantum-auth-client/internal/login"
+	"github.com/quantumauth-io/quantum-auth-client/internal/networks"
 	"github.com/quantumauth-io/quantum-auth-client/internal/pairing"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
 	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
@@ -40,18 +41,19 @@ func (p StaticWalletProvider) DeviceWallet(ctx context.Context) (wtypes.Wallet, 
 }
 
 func NewServer(ctx context.Context, qaClient *qa.Client, authState *login.QAClientLoginService, uiAllowedOrigins []string,
-	ethClient *utilsEth.Client, onChain *contractwallet.Runtime, cfg *config.Config, assetsManager *assets.Manager, cwStore *contractwallet.Store) (*Server, error) {
+	ethClient *utilsEth.Client, onChain *contractwallet.Runtime, cfg *config.Config, assetsManager *assets.Manager, cwStore *contractwallet.Store, networksManager *networks.Manager) (*Server, error) {
 	s := &Server{
-		ctx:           ctx,
-		qaClient:      qaClient,
-		authClient:    authState,
-		mux:           http.NewServeMux(),
-		pairings:      make(map[string]*Pairing),
-		ethClient:     ethClient,
-		onChain:       onChain,
-		cfg:           cfg,
-		assetsManager: assetsManager,
-		cwStore:       cwStore,
+		ctx:             ctx,
+		qaClient:        qaClient,
+		authClient:      authState,
+		mux:             http.NewServeMux(),
+		pairings:        make(map[string]*Pairing),
+		ethClient:       ethClient,
+		onChain:         onChain,
+		cfg:             cfg,
+		assetsManager:   assetsManager,
+		cwStore:         cwStore,
+		networksManager: networksManager,
 	}
 
 	// ---- init allowlist storage ----
@@ -134,8 +136,11 @@ func NewServer(ctx context.Context, qaClient *qa.Client, authState *login.QAClie
 	s.mux.HandleFunc("/wallet/accounts/summary", s.withExtensionPairedGuards(s.handleWalletAccountsSummaryHTTP))
 	s.mux.HandleFunc("/wallet/networks", s.withExtensionPairedGuards(s.handleWalletNetworksHTTP))
 	s.mux.HandleFunc("/wallet/network", s.withExtensionPairedGuards(s.handleWalletSetNetworkHTTP))
+
+	s.mux.HandleFunc("/wallet/networks/add", s.withExtensionPairedGuards(s.handleWalletAddNetworkHTTP))
 	s.mux.HandleFunc("/wallet/networks/remove", s.withExtensionPairedGuards(s.handleWalletRemoveNetworkHTTP))
 	s.mux.HandleFunc("/wallet/networks/update", s.withExtensionPairedGuards(s.handleWalletUpdateNetworkHTTP))
+	s.mux.HandleFunc("/wallet/networks/metadata", s.withExtensionPairedGuards(s.handleWalletNetworkMetadataHTTP))
 
 	s.mux.HandleFunc("/wallet/assets/list", s.withExtensionPairedGuards(s.handleWalletListAssetsHTTP))
 	s.mux.HandleFunc("/wallet/assets/add", s.withExtensionPairedGuards(s.handleWalletAddAssetHTTP))
@@ -363,12 +368,20 @@ func (s *Server) handleDeployContractOnChainHTTP(w http.ResponseWriter, r *http.
 	requireMethodRPC(http.MethodPost, s.handleDeployContractOnChain)(w, r)
 }
 
+func (s *Server) handleWalletAddNetworkHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletAddNetwork)(w, r)
+}
+
 func (s *Server) handleWalletRemoveNetworkHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleWalletRemoveNetwork)(w, r)
 }
 
 func (s *Server) handleWalletUpdateNetworkHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleWalletUpdateNetwork)(w, r)
+}
+
+func (s *Server) handleWalletNetworkMetadataHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleWalletNetworkMetadata)(w, r)
 }
 
 func (s *Server) handleWalletListAssetsHTTP(w http.ResponseWriter, r *http.Request) {

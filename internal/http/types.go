@@ -14,6 +14,7 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/contractwallet"
 	"github.com/quantumauth-io/quantum-auth-client/internal/ethwallet/wtypes"
 	"github.com/quantumauth-io/quantum-auth-client/internal/login"
+	"github.com/quantumauth-io/quantum-auth-client/internal/networks"
 	"github.com/quantumauth-io/quantum-auth-client/internal/qa"
 	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
 )
@@ -84,11 +85,6 @@ type walletRPCReq struct {
 	Params any    `json:"params"`
 }
 
-type walletAccountsReq struct {
-	Silent bool `json:"silent"`
-	Prompt bool `json:"prompt"`
-}
-
 type walletSwitchChainReq struct {
 	ChainIDHex string `json:"chainIdHex"` // "0x..."
 }
@@ -103,19 +99,6 @@ type walletSignTypedDataReq struct {
 	Origin        string `json:"origin"`
 	Address       string `json:"address"`
 	TypedDataJson string `json:"typedDataJson"`
-}
-
-type networkItem struct {
-	ChainIDHex string `json:"chainIdHex"`
-	Name       string `json:"name"`
-}
-
-type walletNetworksResp struct {
-	OK   bool `json:"ok"`
-	Data struct {
-		CurrentChainIDHex string        `json:"currentChainIdHex"`
-		Networks          []networkItem `json:"networks"`
-	} `json:"data"`
 }
 
 type walletSetNetworkReq struct {
@@ -218,14 +201,15 @@ type Server struct {
 	perms            *PermissionStore
 	pairingTokenPath string
 
-	pairings      map[string]*Pairing
-	pairingsMu    sync.Mutex
-	ctx           context.Context
-	onChain       *contractwallet.Runtime
-	cfg           *config.Config
-	assetsManager *assets.Manager
-	cwStore       *contractwallet.Store
-	deployer      *contractwallet.ContractDeployer
+	pairings        map[string]*Pairing
+	pairingsMu      sync.Mutex
+	ctx             context.Context
+	onChain         *contractwallet.Runtime
+	cfg             *config.Config
+	assetsManager   *assets.Manager
+	cwStore         *contractwallet.Store
+	deployer        *contractwallet.ContractDeployer
+	networksManager *networks.Manager
 }
 
 type StaticWalletProvider struct {
@@ -275,11 +259,6 @@ type removeNetworkReq struct {
 	ChainIdHex string `json:"chainIdHex"`
 }
 
-type updateNetworkReq struct {
-	ChainIdHex string                 `json:"chainIdHex"`
-	Patch      map[string]interface{} `json:"patch"`
-}
-
 type listAssetsReq struct {
 	NetworkName string `json:"networkName"`
 }
@@ -295,6 +274,7 @@ type removeAssetReq struct {
 }
 
 type assetMetadataReq struct {
-	ChainIdHex string `json:"chainIdHex"`
-	Address    string `json:"address"`
+	ChainIdHex  string `json:"chainIdHex"`
+	Address     string `json:"address"`
+	NetworkName string `json:"networkName"`
 }

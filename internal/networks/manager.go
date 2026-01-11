@@ -11,6 +11,7 @@ import (
 
 	"github.com/quantumauth-io/quantum-auth-client/internal/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/securefile"
+	"github.com/quantumauth-io/quantum-auth-client/internal/shared"
 )
 
 type Manager struct {
@@ -36,6 +37,97 @@ func NewManager() (*Manager, error) {
 
 func (m *Manager) Path() string { return m.path }
 
+func (m *Manager) AddNetwork(ctx context.Context, n shared.Network) (shared.Network, error) {
+	if err := m.ensureLoadedIfExists(ctx); err != nil {
+		return shared.Network{}, err
+	}
+	if m.store.Schema == 0 {
+		m.store.Schema = constants.SchemaV1
+	}
+	if m.store.Networks == nil {
+		m.store.Networks = map[string]shared.Network{}
+	}
+
+	n.Name = normalizeNetworkKey(n.Name)
+	n.ChainIdHex = normalizeChainIdHex(n.ChainIdHex)
+	n.Explorer = strings.TrimSpace(n.Explorer)
+	n.RpcUrl = strings.TrimSpace(n.RpcUrl)
+	n.EntryPoint = strings.TrimSpace(n.EntryPoint)
+	n.Rpcs = normalizeRPCs(n.Rpcs)
+
+	if n.Name == "" {
+		return shared.Network{}, fmt.Errorf("network.name is required")
+	}
+	if n.ChainIdHex == "" {
+		return shared.Network{}, fmt.Errorf("network.chainIdHex is required")
+	}
+
+	// If chainId provided but chainIdHex missing, you could compute it; but you said chainIdHex exists.
+	// Prevent duplicates by chainIdHex.
+	if key, ok := m.findKeyByChainIdHex(n.ChainIdHex); ok {
+		return shared.Network{}, fmt.Errorf("network already exists for chainIdHex %s (name: %s)", n.ChainIdHex, key)
+	}
+
+	// Also prevent duplicate by name (optional). If you prefer "overwrite", change behavior.
+	if _, exists := m.store.Networks[n.Name]; exists {
+		return shared.Network{}, fmt.Errorf("network name already exists: %s", n.Name)
+	}
+
+	m.store.Networks[n.Name] = n
+	if err := m.persist(ctx); err != nil {
+		return shared.Network{}, err
+	}
+	return n, nil
+}
+
+func (m *Manager) RemoveNetworkByChainIdHex(ctx context.Context, chainIdHex string) error {
+	if err := m.ensureLoadedIfExists(ctx); err != nil {
+		return err
+	}
+	key, ok := m.findKeyByChainIdHex(chainIdHex)
+	if !ok {
+		return nil // idempotent
+	}
+	delete(m.store.Networks, key)
+	return m.persist(ctx)
+}
+
+func (m *Manager) UpdateNetworkByChainIdHex(ctx context.Context, chainIdHex string, patch shared.UpdateNetworkPatch) (shared.Network, error) {
+	if err := m.ensureLoadedIfExists(ctx); err != nil {
+		return shared.Network{}, err
+	}
+
+	key, ok := m.findKeyByChainIdHex(chainIdHex)
+	if !ok {
+		return shared.Network{}, fmt.Errorf("network not found: %s", chainIdHex)
+	}
+
+	n := m.store.Networks[key]
+
+	if patch.Explorer != nil {
+		n.Explorer = strings.TrimSpace(*patch.Explorer)
+	}
+	if patch.EntryPoint != nil {
+		n.EntryPoint = strings.TrimSpace(*patch.EntryPoint)
+	}
+	if patch.RpcUrl != nil {
+		n.RpcUrl = strings.TrimSpace(*patch.RpcUrl)
+	}
+	if patch.Rpcs != nil {
+		n.Rpcs = normalizeRPCs(*patch.Rpcs)
+	}
+
+	// keep normalized invariants
+	n.Name = normalizeNetworkKey(n.Name)
+	n.ChainIdHex = normalizeChainIdHex(n.ChainIdHex)
+
+	m.store.Networks[key] = n
+	if err := m.persist(ctx); err != nil {
+		return shared.Network{}, err
+	}
+	return n, nil
+}
+
 func (m *Manager) Load(ctx context.Context) error {
 	_ = ctx
 
@@ -52,7 +144,7 @@ func (m *Manager) Load(ctx context.Context) error {
 		s.Schema = constants.SchemaV1
 	}
 	if s.Networks == nil {
-		s.Networks = map[string]Network{}
+		s.Networks = map[string]shared.Network{}
 	}
 
 	// normalize keys + fields defensively
@@ -116,7 +208,7 @@ func (m *Manager) persist(ctx context.Context) error {
 // - first run: creates file
 // - later runs: adds only missing networks
 // - optionally fills empty explorer/rpcUrl fields without overwriting user values
-func (m *Manager) EnsureFromConfig(ctx context.Context, defaults []Network) error {
+func (m *Manager) EnsureFromConfig(ctx context.Context, defaults []shared.Network) error {
 	if err := m.ensureLoadedIfExists(ctx); err != nil {
 		return err
 	}
@@ -124,7 +216,7 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults []Network) erro
 		m.store.Schema = constants.SchemaV1
 	}
 	if m.store.Networks == nil {
-		m.store.Networks = map[string]Network{}
+		m.store.Networks = map[string]shared.Network{}
 	}
 
 	changed := false
@@ -218,8 +310,8 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults []Network) erro
 	return nil
 }
 
-func (m *Manager) List() []Network {
-	out := make([]Network, 0, len(m.store.Networks))
+func (m *Manager) List() []shared.Network {
+	out := make([]shared.Network, 0, len(m.store.Networks))
 	for _, n := range m.store.Networks {
 		out = append(out, n)
 	}
@@ -227,6 +319,44 @@ func (m *Manager) List() []Network {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+func (m *Manager) ListFromFile(ctx context.Context) ([]shared.Network, error) {
+	if err := m.ensureLoadedIfExists(ctx); err != nil {
+		return nil, err
+	}
+
+	out := make([]shared.Network, 0, len(m.store.Networks))
+	for _, n := range m.store.Networks {
+		out = append(out, n)
+	}
+	// You already sort in List(); reuse if you want:
+	// sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *Manager) FindByChainIdHex(ctx context.Context, chainIdHex string) (shared.Network, bool, error) {
+	if err := m.ensureLoadedIfExists(ctx); err != nil {
+		return shared.Network{}, false, err
+	}
+
+	want := strings.ToLower(strings.TrimSpace(chainIdHex))
+	if want == "" {
+		return shared.Network{}, false, fmt.Errorf("missing chainIdHex")
+	}
+
+	// Normalize 0x prefix like you do elsewhere if needed:
+	if !strings.HasPrefix(want, "0x") {
+		want = "0x" + want
+	}
+
+	for _, n := range m.store.Networks {
+		if strings.ToLower(strings.TrimSpace(n.ChainIdHex)) == want {
+			return n, true, nil
+		}
+	}
+
+	return shared.Network{}, false, nil
 }
 
 func resolveNetworksPath(appName string) (string, error) {
@@ -252,4 +382,48 @@ func exists(path string) bool {
 
 func normalizeNetworkKey(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+func normalizeChainIdHex(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	if !strings.HasPrefix(s, "0x") {
+		// allow "1" -> "0x1" (optional; if you want strict, remove this)
+		s = "0x" + s
+	}
+	return s
+}
+
+func normalizeRPCs(in []shared.RPC) []shared.RPC {
+	out := make([]shared.RPC, 0, len(in))
+	seen := map[string]bool{} // by url
+	for _, r := range in {
+		name := strings.TrimSpace(r.Name)
+		url := strings.TrimSpace(r.Url)
+		if url == "" {
+			continue
+		}
+		key := strings.ToLower(url)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, shared.RPC{Name: name, Url: url})
+	}
+	return out
+}
+
+func (m *Manager) findKeyByChainIdHex(chainIdHex string) (string, bool) {
+	ch := normalizeChainIdHex(chainIdHex)
+	if ch == "" {
+		return "", false
+	}
+	for k, n := range m.store.Networks {
+		if normalizeChainIdHex(n.ChainIdHex) == ch {
+			return k, true
+		}
+	}
+	return "", false
 }

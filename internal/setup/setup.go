@@ -132,7 +132,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	}
 
 	// ---- Networks Manager
-	netMgr, err := networks.NewManager()
+	networksManager, err := networks.NewManager()
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	defaults := networksFromConfig(cfg)
 
 	// This will create networks.json on first run and merge-add new config networks later.
-	if err := netMgr.EnsureFromConfig(ctx, defaults); err != nil {
+	if err := networksManager.EnsureFromConfig(ctx, defaults); err != nil {
 		return err
 	}
 	// ---- Validate EntryPoint from config (once)
@@ -225,7 +225,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	log.Info("User wallet", "address", userW.Address().Hex(), "balance", ubalance.String())
 
 	// ---- HTTP server
-	srv, err := clienthttp.NewServer(ctx, qaClient, authClient, allowedOrigins, ethClient, onchain, cfg, assetsManager, cwStore)
+	srv, err := clienthttp.NewServer(ctx, qaClient, authClient, allowedOrigins, ethClient, onchain, cfg, assetsManager, cwStore, networksManager)
 	if err != nil {
 		return err
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/contracts/bindings/go/entrypoint"
 	"github.com/quantumauth-io/quantum-auth-client/internal/contracts/bindings/go/quantumauthaccount"
 	"github.com/quantumauth-io/quantum-auth-client/internal/eth"
+	"github.com/quantumauth-io/quantum-auth-client/internal/shared"
 	"github.com/quantumauth-io/quantum-auth-client/internal/utils"
 	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
 	"github.com/quantumauth-io/quantum-go-utils/log"
@@ -1065,8 +1066,47 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func (s *Server) handleWalletNetworkMetadata(w http.ResponseWriter, r *http.Request) {
+	if !requireEthClient(w, s) {
+		return
+	}
+	if s.networksManager == nil {
+		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
+		return
+	}
+
+	var req shared.NetworkMetadataReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	ctx := r.Context()
+
+	// 1) Probe the RPC
+	meta, err := s.networksManager.ProbeRPC(ctx, req.RpcUrl)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: err.Error(),
+		})
+		return
+	}
+
+	// 2) Enrich from store + chainId defaults (+ entrypoint detection if you add it)
+	meta = s.networksManager.EnrichByChain(ctx, meta)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK:   true,
+		JSONKeyData: meta,
+	})
+}
+
 func (s *Server) handleWalletNetworks(w http.ResponseWriter, r *http.Request) {
 	if !requireEthClient(w, s) {
+		return
+	}
+	if s.networksManager == nil {
+		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
 		return
 	}
 
@@ -1076,17 +1116,28 @@ func (s *Server) handleWalletNetworks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nets, err := s.networksManager.ListFromFile(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	// Return the same shape your extension expects: { ok:true, data:{ currentChainIdHex, networks:[...] } }
 	writeJSON(w, http.StatusOK, map[string]any{
 		JSONKeyOK: true,
 		JSONKeyData: map[string]any{
 			JSONKeyCurrentChainIDHex: currentChainIDHex,
-			JSONKeyNetworks:          s.ethClient.SupportedNetworks(),
+			JSONKeyNetworks:          nets,
 		},
 	})
 }
 
 func (s *Server) handleWalletSetNetwork(w http.ResponseWriter, r *http.Request) {
 	if !requireEthClient(w, s) {
+		return
+	}
+	if s.networksManager == nil {
+		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
 		return
 	}
 
@@ -1101,23 +1152,78 @@ func (s *Server) handleWalletSetNetwork(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	networkName, err := eth.NetworkNameForChainIDHex(s.cfg.EthNetworks, want)
+	net, found, err := s.networksManager.FindByChainIdHex(r.Context(), want)
 	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
+		return
+	}
+	if !found {
 		writeJSON(w, http.StatusOK, map[string]any{
 			JSONKeyOK:       false,
 			JSONKeyNotAdded: true,
-			JSONKeyError:    err.Error(),
+			JSONKeyError:    "network not added",
 		})
 		return
 	}
 
-	if err := s.ethClient.UseNetwork(networkName); err != nil {
+	// ---- Merge into cfg (in-memory) so ethrpc client can UseNetwork/UseRPC
+	if s.cfg != nil && s.cfg.EthNetworks != nil {
+		if s.cfg.EthNetworks.Networks == nil {
+			s.cfg.EthNetworks.Networks = map[string]utilsEth.NetworkConfig{} // <-- adjust to your real type
+		}
+
+		nc := utilsEth.NetworkConfig{
+			ChainID:    uint64(net.ChainId),
+			ChainIDHex: net.ChainIdHex,
+			Explorer:   net.Explorer,
+			EntryPoint: net.EntryPoint,
+		}
+
+		if len(net.Rpcs) > 0 {
+			for _, r := range net.Rpcs {
+				nc.RPCs = append(nc.RPCs, utilsEth.RPC{
+					Name: r.Name,
+					URL:  r.Url,
+				})
+			}
+		} else if strings.TrimSpace(net.RpcUrl) != "" {
+			nc.RPCs = []utilsEth.RPC{{Name: "Custom", URL: net.RpcUrl}}
+		}
+
+		s.cfg.EthNetworks.Networks[net.Name] = nc
+		s.cfg.EthNetworks.ActiveNetwork = net.Name
+	}
+
+	// ---- Switch the eth client
+	if err := s.ethClient.UseNetwork(net.Name); err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
-	if err := s.ethClient.UseRPC(EthRPCProviderInfuraName); err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
+
+	// Pick RPC: prefer "Infura" if present, else first.
+	rpcName := ""
+	if len(net.Rpcs) > 0 {
+		for _, r := range net.Rpcs {
+			if strings.EqualFold(strings.TrimSpace(r.Name), "Infura") {
+				rpcName = r.Name
+				break
+			}
+		}
+		if rpcName == "" {
+			rpcName = net.Rpcs[0].Name
+			if strings.TrimSpace(rpcName) == "" {
+				rpcName = "Custom"
+			}
+		}
+	} else if strings.TrimSpace(net.RpcUrl) != "" {
+		rpcName = "Custom"
+	}
+
+	if rpcName != "" {
+		if err := s.ethClient.UseRPC(rpcName); err != nil {
+			writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
+			return
+		}
 	}
 
 	if s.onChain != nil {
@@ -1168,28 +1274,98 @@ func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Request) {
-	var req removeNetworkReq
+func (s *Server) handleWalletAddNetwork(w http.ResponseWriter, r *http.Request) {
+	var req shared.AddNetworkReq
 	if !decodeJSONBody(w, r, &req) {
-		// decodeJSONBody already wrote error
 		return
 	}
 
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		JSONKeyOK:    false,
-		JSONKeyError: "not implemented",
+	ctx := r.Context()
+
+	added, err := s.networksManager.AddNetwork(ctx, req.Network)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to add network",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"network": added,
+		},
+	})
+}
+
+func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Request) {
+	var req removeNetworkReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	chainIdHex := strings.TrimSpace(req.ChainIdHex)
+	if chainIdHex == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "chainIdHex is required",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	if err := s.networksManager.RemoveNetworkByChainIdHex(ctx, chainIdHex); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to remove network",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"removed": true,
+		},
 	})
 }
 
 func (s *Server) handleWalletUpdateNetwork(w http.ResponseWriter, r *http.Request) {
-	var req updateNetworkReq
+	var req shared.UpdateNetworkReq
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		JSONKeyOK:    false,
-		JSONKeyError: "not implemented",
+	chainIdHex := strings.TrimSpace(req.ChainIdHex)
+	if chainIdHex == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "chainIdHex is required",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	updated, err := s.networksManager.UpdateNetworkByChainIdHex(ctx, chainIdHex, req.Patch)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to update network",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"network": updated,
+		},
 	})
 }
 
@@ -1199,10 +1375,54 @@ func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Your UI expects BusResp<AssetRow[]> where data is an array.
+	network := strings.TrimSpace(req.NetworkName)
+	if network == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "networkName is required",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	// OPTIONAL (recommended): bootstrap defaults for this network without overwriting user edits.
+	// If you don’t have defaults yet, just use an empty slice.
+	var defaultAddrs []string
+	if err := s.assetsManager.EnsureStoreForNetwork(ctx, network, defaultAddrs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to load assets store",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	list, err := s.assetsManager.ListForNetwork(ctx, network)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to list assets",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	// Map assets.Asset -> UI AssetRow
+	rows := make([]map[string]any, 0, len(list))
+	for _, a := range list {
+		rows = append(rows, map[string]any{
+			"address":  a.Address,
+			"symbol":   a.Symbol,
+			"name":     a.Name,
+			"decimals": a.Decimals,
+			"logoURI":  a.LogoURI,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		JSONKeyOK:   true,
-		JSONKeyData: []any{},
+		JSONKeyData: rows,
 	})
 }
 
@@ -1212,9 +1432,44 @@ func (s *Server) handleWalletAddAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		JSONKeyOK:    false,
-		JSONKeyError: "not implemented",
+	network := strings.TrimSpace(req.NetworkName)
+	address := strings.TrimSpace(req.Address)
+
+	if network == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "networkName is required",
+		})
+		return
+	}
+	if address == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "address is required",
+		})
+		return
+	}
+
+	asset, err := s.assetsManager.AddAsset(s.ctx, network, address)
+	if err != nil {
+		// treat as user-input / chain lookup error by default
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to add asset",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"address":  asset.Address,
+			"symbol":   asset.Symbol,
+			"name":     asset.Name,
+			"decimals": asset.Decimals,
+			"logoURI":  asset.LogoURI,
+		},
 	})
 }
 
@@ -1224,9 +1479,41 @@ func (s *Server) handleWalletRemoveAsset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		JSONKeyOK:    false,
-		JSONKeyError: "not implemented",
+	network := strings.TrimSpace(req.NetworkName)
+	address := strings.TrimSpace(req.Address)
+
+	if network == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "networkName is required",
+		})
+		return
+	}
+	if address == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "address is required",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	if err := s.assetsManager.RemoveAsset(ctx, network, address); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to remove asset",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	// simple ack is enough; UI reloads list
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"removed": true,
+		},
 	})
 }
 
@@ -1236,9 +1523,46 @@ func (s *Server) handleWalletAssetMetadata(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Your extension normalizer treats ok=false as failure.
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		JSONKeyOK:    false,
-		JSONKeyError: "not implemented",
+	network := strings.TrimSpace(req.NetworkName)
+	address := strings.TrimSpace(req.Address)
+
+	if network == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "networkName is required",
+		})
+		return
+	}
+	if address == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "address is required",
+		})
+		return
+	}
+
+	// Important: use request context (cancels if popup closes / user types again)
+	ctx := r.Context()
+
+	asset, err := s.assetsManager.FetchAsset(ctx, network, address)
+	if err != nil {
+		// keep it user-friendly, but include details if you want for debugging
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to fetch asset metadata",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"address":  asset.Address,
+			"symbol":   asset.Symbol,
+			"name":     asset.Name,
+			"decimals": asset.Decimals,
+			"logoURI":  asset.LogoURI,
+		},
 	})
 }

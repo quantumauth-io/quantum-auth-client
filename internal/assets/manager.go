@@ -83,7 +83,7 @@ func (m *Manager) EnsureStore(ctx context.Context, defaults map[string][]string)
 				return fmt.Errorf("defaults[%s]: %w", netKey, err)
 			}
 
-			a, err := m.fetchAsset(ctx, nk, addr)
+			a, err := m.FetchAsset(ctx, nk, addr)
 			if err != nil {
 				return fmt.Errorf("fetch asset %s[%s]: %w", nk, addr, err)
 			}
@@ -185,7 +185,7 @@ func (m *Manager) EnsureStoreForNetwork(ctx context.Context, network string, def
 			}
 		}
 
-		a, err := m.fetchAsset(ctx, nk, addr)
+		a, err := m.FetchAsset(ctx, nk, addr)
 		if err != nil {
 			return fmt.Errorf("fetch asset %s[%s]: %w", nk, addr, err)
 		}
@@ -268,7 +268,7 @@ func (m *Manager) AddAsset(ctx context.Context, network string, address string) 
 		m.store.Networks[nk] = map[string]Asset{}
 	}
 
-	a, err := m.fetchAsset(ctx, nk, addr)
+	a, err := m.FetchAsset(ctx, nk, addr)
 	if err != nil {
 		return Asset{}, err
 	}

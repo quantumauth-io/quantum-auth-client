@@ -4,12 +4,12 @@ import (
 	"strings"
 
 	"github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
-	"github.com/quantumauth-io/quantum-auth-client/internal/networks"
+	"github.com/quantumauth-io/quantum-auth-client/internal/shared"
 )
 
 // somewhere in setup.go or a small adapter package
-func networksFromConfig(cfg *config.Config) []networks.Network {
-	out := make([]networks.Network, 0, len(cfg.EthNetworks.Networks))
+func networksFromConfig(cfg *config.Config) []shared.Network {
+	out := make([]shared.Network, 0, len(cfg.EthNetworks.Networks))
 
 	for name, n := range cfg.EthNetworks.Networks {
 		rpc := ""
@@ -27,7 +27,7 @@ func networksFromConfig(cfg *config.Config) []networks.Network {
 			rpc = n.RPCs[0].URL
 		}
 
-		out = append(out, networks.Network{
+		out = append(out, shared.Network{
 			Name:       name,
 			ChainId:    int64(n.ChainID),
 			ChainIdHex: n.ChainIDHex,
