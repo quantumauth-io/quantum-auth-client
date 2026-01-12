@@ -11,7 +11,7 @@ Ethereum:
   Networks:
     sepolia:
       chainId: 11155111
-      entryPoint: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       chainIdHex: "0xaa36a7"
       explorer: "https://sepolia.etherscan.io"
       rpcs:
@@ -22,14 +22,14 @@ Ethereum:
       chainId: 84532
       chainIdHex: "0x14a34"
       explorer: "https://sepolia.basescan.org"
-      entryPoint: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       rpcs:
         - name: ""
           url: ""
 
     mainnet:
       chainId: 1
-      entryPoint: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       chainIdHex: "0x1"
       explorer: "https://etherscan.io"
       rpcs:
