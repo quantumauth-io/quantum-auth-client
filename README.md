@@ -31,7 +31,6 @@ The client handles:
 You will need an Infura api key in your environment
 
 ```
-INFURA_API_KEY=<your-key>
 QA_ENV=local   // for local development
 QA_ENV=develop // for the development environment
 
@@ -44,7 +43,7 @@ QA_ENV=        // if not set it will default to prod
 
 ### Linux
 
-[![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/quantum-auth-client)
+
 
 Manual installation
 

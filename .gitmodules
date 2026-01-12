@@ -1,4 +1,4 @@
 [submodule "internal/contracts"]
 	path = internal/contracts
 	url = git@github.com:quantumauth-io/quantum-auth-contracts.git
-	branch = main
+
