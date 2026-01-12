@@ -26,37 +26,25 @@ type fileData struct {
 	DeviceLabel  string `json:"device_label,omitempty"`
 	PQPubKeyB64  string `json:"pq_pub_key_b64,omitempty"`
 	PQPrivKeyB64 string `json:"pq_priv_key_b64,omitempty"`
+	InfuraAPIKey string `json:"infura_api_key"`
 }
 
 // State is kept in memory while the client runs.
 type State struct {
-	UserID   string
-	DeviceID string
+	UserID       string
+	DeviceID     string
+	InfuraAPIKey string
 }
 
-type encFile struct {
-	Version int `json:"version"`
-
-	// KDF params (tune per device class)
-	ArgonTime    uint32 `json:"argon_time"`
-	ArgonMemory  uint32 `json:"argon_memory"`  // KiB
-	ArgonThreads uint8  `json:"argon_threads"` // parallelism
-	ArgonKeyLen  uint32 `json:"argon_key_len"`
-
-	SaltB64  string `json:"salt_b64"`
-	NonceB64 string `json:"nonce_b64"`
-	CTB64    string `json:"ct_b64"`
+type PreflightInputs struct {
+	Email       string
+	Username    string
+	DeviceLabel string
+	InfuraKey   string
+	Password    []byte
 }
 
-// Reasonable defaults for desktop/laptop.
-// Memory is KiB: 64*1024 = 64 MiB.
-var defaultKDF = encFile{
-	Version:      1,
-	ArgonTime:    3,
-	ArgonMemory:  64 * 1024,
-	ArgonThreads: 2,
-	ArgonKeyLen:  32,
-}
+type PreflightFunc func(ctx context.Context, in PreflightInputs) error
 
 type QAClientLoginService struct {
 	ctx                context.Context
@@ -65,6 +53,11 @@ type QAClientLoginService struct {
 	defaultEmail       string
 	defaultDeviceLabel string
 	State              *State
+	preflight          PreflightFunc
+}
+
+func (qas *QAClientLoginService) SetPreflight(fn PreflightFunc) {
+	qas.preflight = fn
 }
 
 func NewQAClientLoginService(
@@ -127,8 +120,8 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 	return qas.EnsureLoginWithPassword(pwd)
 }
 
-// EnsureLogin is called on client startup.
-func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []byte, error) {
+// EnsureLoginWithPassword is called on client startup.
+func (qas *QAClientLoginService) EnsureLoginWithPassword(password []byte) (*State, []byte, error) {
 	paths, err := securefile.ConfigPathCandidates(constants.AppName, constants.ClientIdentityFile)
 	if err != nil {
 		return nil, nil, err
@@ -170,12 +163,12 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []
 		return nil, nil, err
 	}
 
-	_, err = store.Ensure(pwd)
+	_, err = store.Ensure(password)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	sealer := tpmdevice.NewSealer("") // owner auth usually ""
+	sealer := tpmdevice.NewSealer("")
 	devStore, err := ethdevice.NewStore(sealer)
 	if err != nil {
 		return nil, nil, err
@@ -186,19 +179,15 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []
 		return nil, nil, err
 	}
 
-	fd, err := securefile.ReadEncryptedJSON[fileData](
-		foundPath,
-		pwd,
-		securefile.Options{
-			AADFunc: func(_ string) []byte { return []byte("quantumauth:client_identity:v1") },
-		},
-	)
+	sealer = tpmdevice.NewSealer("")
+	fd, err := securefile.ReadEncryptedJSONAuto[fileData](qas.ctx, foundPath, password, securefile.Options{
+		TPMSealer: sealer,
+		TPMLabel:  "quantumauth:client_identity:dek:v1",
+		AADFunc:   func(_ string) []byte { return []byte("quantumauth:client_identity:v2") },
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("decrypt creds file %s: %w", foundPath, err)
 	}
-
-	// Optional: migrate to canonical path if we loaded from legacy path
-	// if foundPath != qas.path { _ = securefile.WriteEncryptedJSON(qas.path, fd, pwd, ...) }
 
 	if fd.PQPubKeyB64 != "" && fd.PQPrivKeyB64 != "" {
 		if err := qas.qaClient.LoadPQKeys(fd.PQPubKeyB64, fd.PQPrivKeyB64); err != nil {
@@ -206,17 +195,19 @@ func (qas *QAClientLoginService) EnsureLoginWithPassword(pwd []byte) (*State, []
 		}
 	}
 
-	state := &State{UserID: fd.UserID, DeviceID: fd.DeviceID}
+	state := &State{UserID: fd.UserID, DeviceID: fd.DeviceID, InfuraAPIKey: fd.InfuraAPIKey}
 
-	if err := qas.qaClient.FullLogin(qas.ctx, state.UserID, state.DeviceID, pwd); err != nil {
-		log.Error("full login failed", "error", err)
-		state.Clear()
-		return nil, nil, err
+	// FullLogin is for backend authentication/session.
+	// If it fails (network/back-end unreachable), do NOT block local wallet usage.
+	if err := qas.qaClient.FullLogin(qas.ctx, state.UserID, state.DeviceID, password); err != nil {
+		// Keep creds + PQ keys loaded; just warn that backend features are unavailable.
+		log.Warn("backend login unavailable; continuing in offline mode (wallet still usable)", "error", err)
+	} else {
+		log.Info("successfully logged in to backend", "user", state.UserID)
 	}
 
 	qas.State = state
-	log.Info("successfully logged in", "user", state.UserID)
-	return state, pwd, nil
+	return state, password, nil
 }
 
 // When no credentials file exists, offer the user two paths:
@@ -265,6 +256,23 @@ func (qas *QAClientLoginService) firstTimeSetup() (*State, []byte, error) {
 		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
 
+	infuraKey, err := promptInfuraAPIKey()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read infura api key: %w", err)
+	}
+	// ✅ PRE-FLIGHT: run all local/chain checks BEFORE creating remote user/email
+	if qas.preflight != nil {
+		if err := qas.preflight(qas.ctx, PreflightInputs{
+			Email:       email,
+			Username:    username,
+			DeviceLabel: deviceLabel,
+			InfuraKey:   infuraKey,
+			Password:    pwd,
+		}); err != nil {
+			return nil, nil, fmt.Errorf("preflight failed: %w", err)
+		}
+	}
+
 	userID, err := qas.qaClient.RegisterUser(qas.ctx, email, pwd, username)
 	if err != nil {
 		return nil, nil, fmt.Errorf("register user: %w", err)
@@ -275,7 +283,7 @@ func (qas *QAClientLoginService) firstTimeSetup() (*State, []byte, error) {
 		return nil, nil, err
 	}
 
-	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, pwd)
+	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, pwd, infuraKey)
 }
 
 // Existing-account flow: ask email+password, then add device, write file, return state.
@@ -290,6 +298,11 @@ func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, []byte, e
 		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
 
+	infuraKey, err := promptInfuraAPIKey()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read infura api key: %w", err)
+	}
+
 	userID, err := qas.qaClient.GetUserByEmailAndPassword(qas.ctx, email, password)
 	if err != nil {
 		return nil, nil, fmt.Errorf("login failed: %w", err)
@@ -300,7 +313,7 @@ func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, []byte, e
 		return nil, nil, err
 	}
 
-	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, password)
+	return qas.persistCredsAndState(userID, deviceID, email, deviceLabel, password, infuraKey)
 }
 
 func (qas *QAClientLoginService) registerDevice(userEmail string, userPasswordB64 []byte, deviceLabel string) (string, error) {
@@ -313,30 +326,35 @@ func (qas *QAClientLoginService) registerDevice(userEmail string, userPasswordB6
 
 // Helper: shared logic for exporting PQ keys, writing creds file, and returning State.
 func (qas *QAClientLoginService) persistCredsAndState(
-	userID, deviceID, email, deviceLabel string, password []byte,
-) (*State, []byte, error) {
+	userID, deviceID, email, deviceLabel string, password []byte, infuraKey string) (*State, []byte, error) {
 
 	pqPubB64, pqPrivB64, err := qas.qaClient.ExportPQKeys()
 	if err != nil {
 		return nil, nil, fmt.Errorf("export PQ keys: %w", err)
 	}
 
-	if err := securefile.WriteEncryptedJSON(qas.path, fileData{
+	sealer := tpmdevice.NewSealer("")
+	err = securefile.WriteEncryptedJSONAuto(qas.ctx, qas.path, fileData{
 		UserID:       userID,
 		DeviceID:     deviceID,
 		Email:        email,
 		DeviceLabel:  deviceLabel,
 		PQPubKeyB64:  pqPubB64,
 		PQPrivKeyB64: pqPrivB64,
-	}, password, securefile.Options{
-		AADFunc: func(_ string) []byte { return []byte("quantumauth:client_identity:v1") },
-	}); err != nil {
-		return nil, nil, err
+		InfuraAPIKey: infuraKey}, password, securefile.Options{
+		TPMSealer: sealer,
+		TPMLabel:  "quantumauth:client_identity:dek:v1",
+		AADFunc:   func(_ string) []byte { return []byte("quantumauth:client_identity:v2") },
+	})
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("write state: %w", err)
 	}
 
 	state := &State{
-		UserID:   userID,
-		DeviceID: deviceID,
+		UserID:       userID,
+		DeviceID:     deviceID,
+		InfuraAPIKey: infuraKey,
 	}
 
 	qas.State = state
@@ -344,14 +362,41 @@ func (qas *QAClientLoginService) persistCredsAndState(
 	return state, password, nil
 }
 
+func promptInfuraAPIKey() (string, error) {
+	fmt.Println()
+	fmt.Println("=== Ethereum RPC Provider Setup ===")
+	fmt.Println("QuantumAuth uses Infura for default Ethereum RPC access.")
+	fmt.Println()
+	fmt.Println("Create a free Infura account and API key here:")
+	fmt.Println("👉 https://www.infura.io/register")
+	fmt.Println()
+
+	for {
+		key := promptLineWithDefault("Enter your Infura API Key", "")
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			fmt.Println("Infura API key cannot be empty.")
+			continue
+		}
+
+		return key, nil
+	}
+}
+
 func promptLineWithDefault(label, def string) string {
-	reader := bufio.NewReader(os.Stdin)
 	if def != "" {
 		fmt.Printf("%s [%s]: ", label, def)
 	} else {
 		fmt.Printf("%s: ", label)
 	}
-	line, _ := reader.ReadString('\n')
+
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return def
+	}
+
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return def

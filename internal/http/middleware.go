@@ -3,8 +3,6 @@ package http
 import (
 	"fmt"
 	"net/http"
-
-	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 
 func (s *Server) withCORS(policy corsPolicy, next http.HandlerFunc) http.HandlerFunc {
@@ -134,7 +132,6 @@ func (s *Server) withExtensionPairedGuards(next http.HandlerFunc) http.HandlerFu
 		}
 
 		if got := r.Header.Get(extensionPairHeader); got == "" || got != token {
-			log.Info("extension paired guards", "token", token, "got", got)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

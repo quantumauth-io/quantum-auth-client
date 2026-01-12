@@ -55,13 +55,8 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 	cfg.EthNetworks.Normalize()
-	err = cfg.NormalizeDefaultAssets()
-	if err != nil {
+	if err := cfg.NormalizeDefaultAssets(); err != nil {
 		log.Error("normailze default assets", "error", err)
-		return err
-	}
-
-	if err := cfg.InjectInfuraKeyFromEnv(); err != nil {
 		return err
 	}
 	if err := cfg.ApplyServerURLFromEnv(); err != nil {
@@ -81,6 +76,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	}()
 
 	log.Info("TPM ready", "handle", fmt.Sprintf("0x%x", uint32(tpmClient.Handle())))
+
 	// ---- QA client
 	qaClient, err := qa.NewClient(cfg.ClientSettings.ServerURL, tpmClient)
 	if err != nil {
@@ -96,19 +92,102 @@ func Run(ctx context.Context, build BuildInfo) error {
 	authClient := login.NewQAClientLoginService(ctx, qaClient, cfg.ClientSettings.Email, cfg.ClientSettings.DeviceLabel)
 	defer authClient.Clear()
 
-	_, pwd, err := authClient.EnsureLogin()
+	// ---- Preflight hook
+	//
+	// This runs BEFORE RegisterUser/RegisterDevice in first-time flows, so we avoid:
+	// - creating a DB user + sending welcome email
+	// - then failing later on local/chain setup
+	authClient.SetPreflight(func(ctx context.Context, in login.PreflightInputs) error {
+		// 0) Ensure we can bind the HTTP port (common late failure)
+		listenAddr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)
+		ln, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			return fmt.Errorf("cannot bind %s: %w", listenAddr, err)
+		}
+		_ = ln.Close()
+
+		// 1) Inject Infura key into config for RPC selection/dial
+		if err := cfg.InjectInfuraKey(in.InfuraKey); err != nil {
+			return err
+		}
+
+		// 2) ETH RPC client + select network/rpc + dial
+		ethClient, err := eth.NewFromConfig(ctx, cfg.EthNetworks)
+		if err != nil {
+			return err
+		}
+		if err := ethClient.UseNetwork("mainnet"); err != nil {
+			return err
+		}
+		if err := ethClient.UseRPC("Infura"); err != nil {
+			return err
+		}
+		if err := ethClient.EnsureBackend(ctx); err != nil {
+			return err
+		}
+
+		// 3) Validate EntryPoint from config (once)
+		activeNetName := cfg.EthNetworks.ActiveNetwork
+		netCfg, ok := cfg.EthNetworks.Networks[activeNetName]
+		if !ok {
+			return fmt.Errorf("active network %q not found in config", activeNetName)
+		}
+		if netCfg.EntryPoint == "" {
+			return fmt.Errorf("missing entryPoint for network %q", activeNetName)
+		}
+		if !common.IsHexAddress(netCfg.EntryPoint) {
+			return fmt.Errorf("invalid entryPoint %q for network %q", netCfg.EntryPoint, activeNetName)
+		}
+
+		entryPoint := common.HexToAddress(netCfg.EntryPoint)
+		code, err := ethClient.GetCode(ctx, entryPoint.Hex(), utilsEth.BlockLatest)
+		if err != nil {
+			return err
+		}
+		if code == "0x" {
+			return fmt.Errorf("entryPoint not deployed on this chain: %s", entryPoint.Hex())
+		}
+
+		// 4) Validate local wallet stores can initialize with chosen password
+		uwStore, err := userwallet.NewStore()
+		if err != nil {
+			return err
+		}
+		if _, err := uwStore.Ensure(in.Password); err != nil {
+			return err
+		}
+
+		sealer := tpmdevice.NewSealer("")
+		dwStore, err := ethdevice.NewStore(sealer)
+		if err != nil {
+			return err
+		}
+		if _, err := dwStore.Ensure(ctx); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	// ---- Ensure login (first-time path will preflight before registering user/device)
+	state, pwd, err := authClient.EnsureLogin()
 	if err != nil {
 		return err
 	}
-
 	defer login.Zero(pwd)
+
+	// NOTE: cfg.InjectInfuraKey may already have been called during preflight (first-time flow),
+	// but calling it again is harmless and keeps the main path consistent.
+	if err := cfg.InjectInfuraKey(state.InfuraAPIKey); err != nil {
+		return err
+	}
 
 	// ---- ETH RPC client + select network/rpc
 	ethClient, err := eth.NewFromConfig(ctx, cfg.EthNetworks)
 	if err != nil {
 		return err
 	}
-	if err := ethClient.UseNetwork("sepolia"); err != nil {
+	if err := ethClient.UseNetwork("mainnet"); err != nil {
 		return err
 	}
 	if err := ethClient.UseRPC("Infura"); err != nil {
@@ -143,6 +222,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err := networksManager.EnsureFromConfig(ctx, defaults); err != nil {
 		return err
 	}
+
 	// ---- Validate EntryPoint from config (once)
 	activeNetName := cfg.EthNetworks.ActiveNetwork
 	netCfg, ok := cfg.EthNetworks.Networks[activeNetName]
@@ -175,8 +255,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 		return err
 	}
 
-	log.Info("user wallet", "address", userW.Address())
-
 	sealer := tpmdevice.NewSealer("")
 	dwStore, err := ethdevice.NewStore(sealer)
 	if err != nil {
@@ -201,7 +279,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 
 	contractCfg, err := cwStore.LoadForChain(chainID)
 	if errors.Is(err, contractwallet.ErrContractNotConfigured) {
-		log.Warn("contract not configured", "path", cwStore.Path, "chain_id", chainID)
 		contractCfg = nil
 	} else if err != nil {
 		return err
@@ -213,16 +290,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 		Device:   deviceW,
 		Contract: contractCfg,
 	}
-
-	ubalance, err := onchain.BalanceOf(ctx, userW.Address())
-	if err != nil {
-		return err
-	}
-	_, err = onchain.BalanceOf(ctx, deviceW.Address())
-	if err != nil {
-		return err
-	}
-	log.Info("User wallet", "address", userW.Address().Hex(), "balance", ubalance.String())
 
 	// ---- HTTP server
 	srv, err := clienthttp.NewServer(ctx, qaClient, authClient, allowedOrigins, ethClient, onchain, cfg, assetsManager, cwStore, networksManager)
@@ -240,7 +307,6 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err != nil {
 		return err
 	}
-
 	srv.AttachDeployer(deployer)
 
 	listenAddr := net.JoinHostPort(cfg.ClientSettings.LocalHost, cfg.ClientSettings.Port)

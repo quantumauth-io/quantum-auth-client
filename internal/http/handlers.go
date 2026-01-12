@@ -860,8 +860,6 @@ func (s *Server) handleWalletPersonalSign(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Info("wallet personal sign", "addr", addr)
-
 	wallet, err := s.pickWallet(addr)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{JSONKeyUnauthorized: true})
@@ -900,8 +898,6 @@ func (s *Server) handleWalletSignTypedDataV4(w http.ResponseWriter, r *http.Requ
 		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, WalletInvalidAddressText, err.Error())
 		return
 	}
-
-	log.Info("typesDataSigning", "addr", addr)
 
 	wallet, err := s.pickWallet(addr)
 	if err != nil {

@@ -3,6 +3,7 @@
 package securefile
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/quantumauth-io/quantum-go-utils/log"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -22,50 +24,84 @@ var (
 	ErrInvalidPasswordOrCorrupt = errors.New("invalid password or corrupted file")
 )
 
-// KDFParams describes the on-disk encryption envelope and KDF settings.
-// This is what gets marshaled to disk (as JSON).
+// KDFParams describes the on-disk encryption envelope.
+// NOTE: now supports both password-derived and TPM-derived keys.
 type KDFParams struct {
-	Version int `json:"version"`
+	Version int    `json:"version"`
+	Mode    string `json:"mode,omitempty"` // "password" (default) or "tpm"
 
-	// Argon2id params
-	ArgonTime    uint32 `json:"argon_time"`
-	ArgonMemory  uint32 `json:"argon_memory_kib"`
-	ArgonThreads uint8  `json:"argon_threads"`
-	ArgonKeyLen  uint32 `json:"argon_key_len"`
+	// Argon2id params (password mode)
+	ArgonTime    uint32 `json:"argon_time,omitempty"`
+	ArgonMemory  uint32 `json:"argon_memory_kib,omitempty"`
+	ArgonThreads uint8  `json:"argon_threads,omitempty"`
+	ArgonKeyLen  uint32 `json:"argon_key_len,omitempty"`
+	SaltB64      string `json:"salt_b64,omitempty"`
 
-	// Envelope
-	SaltB64  string `json:"salt_b64"`
+	// TPM mode
+	SealedDEKB64 string `json:"sealed_dek_b64,omitempty"`
+
+	// Envelope (both modes)
 	NonceB64 string `json:"nonce_b64"`
 	CTB64    string `json:"ct_b64"`
 }
 
-// DefaultKDF are reasonable defaults for a local encrypted file.
-// Tune for your threat model and target hardware.
 var DefaultKDF = KDFParams{
-	Version:      1,
+	Version:      2,
+	Mode:         "password",
 	ArgonTime:    2,
-	ArgonMemory:  64 * 1024, // 64 MiB in KiB
+	ArgonMemory:  64 * 1024,
 	ArgonThreads: 1,
 	ArgonKeyLen:  32,
 }
 
 // Options controls encryption behavior.
 type Options struct {
-	// KDF parameters to use (Version must be 1).
 	KDF KDFParams
 
-	// File permissions for the final file and directory.
-	// DirectoryPerm is used for MkdirAll(filepath.Dir(path)).
 	FilePerm      os.FileMode
 	DirectoryPerm os.FileMode
 
-	// AADFunc returns associated data for AEAD.
-	// If non-nil, the returned bytes must be identical on read + write.
-	// Common patterns:
-	//  - nil (no AAD)
-	//  - func(path string) []byte { return []byte("quantumauth:client_identity:v1") } (stable binding)
-	//  - func(path string) []byte { return []byte(path) } (bind to path; moving file breaks decrypt)
 	AADFunc func(path string) []byte
+
+	// TPM support (optional)
+	TPMSealer TPMSealer // interface; keep securefile independent from tpmdevice package
+	TPMLabel  string    // used to scope the sealed DEK
+}
+
+// TPMSealer is implemented by  tpmdevice.Sealer.
+type TPMSealer interface {
+	Seal(ctx context.Context, label string, secret []byte) ([]byte, error)
+	Unseal(ctx context.Context, label string, blob []byte) ([]byte, error)
+}
+
+// ReadEncryptedJSONAuto tries TPM first, then falls back to password with warning.
+func ReadEncryptedJSONAuto[T any](ctx context.Context, path string, password []byte, opt ...Options) (T, error) {
+	o := mergeOptions(opt...)
+
+	if o.TPMSealer != nil && o.TPMLabel != "" {
+		out, err := ReadTPMEncryptedJSON[T](ctx, path, o)
+		if err == nil {
+			return out, nil
+		}
+		log.Warn("securefile: TPM decrypt failed, falling back to password mode", "error", err)
+	}
+
+	return ReadEncryptedJSON[T](path, password, o)
+}
+
+// WriteEncryptedJSONAuto prefers TPM; falls back to password with warning.
+func WriteEncryptedJSONAuto[T any](ctx context.Context, path string, v T, password []byte, opt ...Options) error {
+	o := mergeOptions(opt...)
+
+	if o.TPMSealer != nil && o.TPMLabel != "" {
+		if err := WriteTPMEncryptedJSON[T](ctx, path, v, o); err == nil {
+			return nil
+		} else {
+			log.Warn("securefile: TPM encrypt failed, falling back to password mode", "error", err)
+		}
+	}
+
+	return WriteEncryptedJSON[T](path, v, password, o)
 }
 
 func defaultOptions() Options {
@@ -77,7 +113,7 @@ func defaultOptions() Options {
 	}
 }
 
-// WriteEncryptedJSON marshals v as pretty JSON, encrypts it, and writes it atomically to path.
+// WriteEncryptedJSON MODE PASSWORD
 func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options) error {
 	o := mergeOptions(opt...)
 
@@ -97,8 +133,12 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 		return fmt.Errorf("marshal json: %w", err)
 	}
 
-	if o.KDF.Version != 1 {
-		return fmt.Errorf("unsupported kdf version: %d", o.KDF.Version)
+	ver := o.KDF.Version
+	if ver == 0 {
+		ver = 2
+	}
+	if ver != 1 && ver != 2 {
+		return fmt.Errorf("unsupported kdf version: %d", ver)
 	}
 
 	// salt
@@ -134,6 +174,11 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 	ct := aead.Seal(nil, nonce, plain, aad)
 
 	out := o.KDF
+	out.Version = ver
+	if ver == 2 && out.Mode == "" {
+		out.Mode = "password"
+	}
+
 	out.SaltB64 = base64.StdEncoding.EncodeToString(salt)
 	out.NonceB64 = base64.StdEncoding.EncodeToString(nonce)
 	out.CTB64 = base64.StdEncoding.EncodeToString(ct)
@@ -146,7 +191,71 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 	return atomicWriteFile(path, b, o.FilePerm)
 }
 
-// ReadEncryptedJSON reads path, decrypts it using password, and unmarshals JSON into T.
+// WriteTPMEncryptedJSON MODE TPM
+func WriteTPMEncryptedJSON[T any](ctx context.Context, path string, v T, opt ...Options) error {
+	o := mergeOptions(opt...)
+	if o.TPMSealer == nil {
+		return errors.New("securefile w: TPMSealer is required")
+	}
+	if o.TPMLabel == "" {
+		return errors.New("securefile w: TPMLabel is required")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), o.DirectoryPerm); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+
+	plain, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+
+	// random DEK (always 32 bytes for XChaCha20-Poly1305)
+	dek := make([]byte, 32)
+	if _, err := rand.Read(dek); err != nil {
+		return fmt.Errorf("rand dek: %w", err)
+	}
+	defer zeroBytes(dek)
+
+	sealed, err := o.TPMSealer.Seal(ctx, o.TPMLabel, dek)
+	if err != nil {
+		return fmt.Errorf("tpm seal dek: %w", err)
+	}
+
+	aead, err := chacha20poly1305.NewX(dek)
+	if err != nil {
+		return fmt.Errorf("aead: %w", err)
+	}
+
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("rand nonce: %w", err)
+	}
+
+	var aad []byte
+	if o.AADFunc != nil {
+		aad = o.AADFunc(path)
+	}
+
+	ct := aead.Seal(nil, nonce, plain, aad)
+
+	out := KDFParams{
+		Version:      2,
+		Mode:         "tpm",
+		SealedDEKB64: base64.StdEncoding.EncodeToString(sealed),
+		NonceB64:     base64.StdEncoding.EncodeToString(nonce),
+		CTB64:        base64.StdEncoding.EncodeToString(ct),
+	}
+
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal enc file: %w", err)
+	}
+
+	return atomicWriteFile(path, b, o.FilePerm)
+}
+
+// ReadEncryptedJSON MODE PASSWORD
 func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, error) {
 
 	var zero T
@@ -168,7 +277,16 @@ func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, 
 	if err := json.Unmarshal(b, &ef); err != nil {
 		return zero, fmt.Errorf("unmarshal enc file: %w", err)
 	}
-	if ef.Version != 1 {
+
+	switch ef.Version {
+	case 1:
+		// legacy password envelope
+	case 2:
+		// v2 password envelope
+		if ef.Mode != "" && strings.ToLower(ef.Mode) != "password" {
+			return zero, fmt.Errorf("unsupported v2 mode: %q", ef.Mode)
+		}
+	default:
 		return zero, fmt.Errorf("unsupported file version: %d", ef.Version)
 	}
 
@@ -208,8 +326,77 @@ func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, 
 	return out, nil
 }
 
-// AtomicWriteFile writes data to path atomically (write temp + rename).
-// This is NOT encrypted; it's a utility for safe writes.
+// ReadTPMEncryptedJSON MODE TPM
+func ReadTPMEncryptedJSON[T any](ctx context.Context, path string, opt ...Options) (T, error) {
+	var zero T
+	o := mergeOptions(opt...)
+	if o.TPMSealer == nil {
+		return zero, errors.New("securefile r: TPMSealer is required")
+	}
+	if o.TPMLabel == "" {
+		return zero, errors.New("securefile r: TPMLabel is required")
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return zero, fmt.Errorf("read file: %w", err)
+	}
+
+	var ef KDFParams
+	if err := json.Unmarshal(b, &ef); err != nil {
+		return zero, fmt.Errorf("unmarshal enc file: %w", err)
+	}
+	// accept v2 tpm only here
+	if ef.Version != 2 || strings.ToLower(ef.Mode) != "tpm" {
+		return zero, fmt.Errorf("not a v2 tpm file")
+	}
+
+	nonce, err := base64.StdEncoding.DecodeString(ef.NonceB64)
+	if err != nil {
+		return zero, fmt.Errorf("decode nonce: %w", err)
+	}
+	ct, err := base64.StdEncoding.DecodeString(ef.CTB64)
+	if err != nil {
+		return zero, fmt.Errorf("decode ciphertext: %w", err)
+	}
+	sealed, err := base64.StdEncoding.DecodeString(ef.SealedDEKB64)
+	if err != nil {
+		return zero, fmt.Errorf("decode sealed dek: %w", err)
+	}
+
+	dek, err := o.TPMSealer.Unseal(ctx, o.TPMLabel, sealed)
+	if err != nil {
+		return zero, ErrInvalidPasswordOrCorrupt // same generic error
+	}
+	if len(dek) != 32 {
+		zeroBytes(dek)
+		return zero, ErrInvalidPasswordOrCorrupt
+	}
+	defer zeroBytes(dek)
+
+	aead, err := chacha20poly1305.NewX(dek)
+	if err != nil {
+		return zero, fmt.Errorf("aead: %w", err)
+	}
+
+	var aad []byte
+	if o.AADFunc != nil {
+		aad = o.AADFunc(path)
+	}
+
+	plain, err := aead.Open(nil, nonce, ct, aad)
+	if err != nil {
+		return zero, ErrInvalidPasswordOrCorrupt
+	}
+
+	var out T
+	if err := json.Unmarshal(plain, &out); err != nil {
+		return zero, fmt.Errorf("unmarshal json: %w", err)
+	}
+	return out, nil
+}
+
+// AtomicWriteFile MODE PLAN TEXT (NOT ENCRYPTED)
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm)
 }
@@ -311,7 +498,6 @@ func mergeOptions(opt ...Options) Options {
 	if len(opt) == 0 {
 		return o
 	}
-	// Single options struct; if you want layering, we can add it, but keep it simple.
 	in := opt[0]
 
 	// KDF
@@ -331,6 +517,15 @@ func mergeOptions(opt ...Options) Options {
 	if in.AADFunc != nil {
 		o.AADFunc = in.AADFunc
 	}
+
+	// TPM
+	if in.TPMSealer != nil {
+		o.TPMSealer = in.TPMSealer
+	}
+	if in.TPMLabel != "" {
+		o.TPMLabel = in.TPMLabel
+	}
+
 	return o
 }
 
@@ -367,19 +562,6 @@ func QaEnvFolder() (string, error) {
 	}
 }
 
-func isNonProdEnvSet() bool {
-	raw := strings.TrimSpace(os.Getenv("QA_ENV"))
-	if raw == "" {
-		return false
-	}
-	switch strings.ToLower(raw) {
-	case "prod", "production":
-		return false
-	default:
-		return true
-	}
-}
-
 func isAllZero(b []byte) bool {
 	for _, v := range b {
 		if v != 0 {
@@ -387,4 +569,10 @@ func isAllZero(b []byte) bool {
 		}
 	}
 	return true
+}
+
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }

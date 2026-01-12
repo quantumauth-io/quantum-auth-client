@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +29,10 @@ type Config struct {
 	DefaultAssets  DefaultAssetsConfig   `yaml:"DefaultAssets" json:"defaultAssets"`
 }
 
+func infuraRPC(chain string, key string) string {
+	return fmt.Sprintf("https://%s.infura.io/v3/%s", chain, key)
+}
+
 func Load() (*Config, error) {
 	home, _ := os.UserHomeDir()
 	paths := []string{
@@ -41,46 +44,30 @@ func Load() (*Config, error) {
 	return utilsconfig.ParseConfigWithEmbedded[Config](paths, EmbeddedConfigYAML)
 }
 
-func (c *Config) InjectInfuraKeyFromEnv() error {
-	key := strings.TrimSpace(os.Getenv("INFURA_API_KEY"))
+func (c *Config) InjectInfuraKey(key string) error {
+	key = strings.TrimSpace(key)
 	if key == "" {
-		return errors.New("INFURA_API_KEY is not set")
+		return errors.New("infura api key is empty")
 	}
 
 	for netName, net := range c.EthNetworks.Networks {
-		for i := range net.RPCs {
-			rpc := &net.RPCs[i]
+		rpcURL := infuraRPC(netName, key)
 
-			if !strings.EqualFold(rpc.Name, "Infura") {
-				continue
+		// Ensure at least one RPC entry exists
+		if len(net.RPCs) == 0 {
+			net.RPCs = []utilsEth.RPC{
+				{
+					Name: "Infura",
+					URL:  rpcURL,
+				},
 			}
-
-			u := strings.TrimSpace(rpc.URL)
-			if u == "" {
-				return fmt.Errorf("empty Infura URL for network %q", netName)
-			}
-
-			// If URL already ends with the key, don't double-append.
-			if strings.HasSuffix(u, "/"+key) {
-				continue
-			}
-
-			// Basic validation + normalization
-			parsed, err := url.Parse(u)
-			if err != nil {
-				return fmt.Errorf("invalid Infura URL for network %q: %w", netName, err)
-			}
-
-			// Ensure trailing slash before appending key
-			if !strings.HasSuffix(parsed.Path, "/") {
-				parsed.Path += "/"
-			}
-			parsed.Path += key
-
-			rpc.URL = parsed.String()
+		} else {
+			// Fill or overwrite the first RPC slot
+			net.RPCs[0].Name = "Infura"
+			net.RPCs[0].URL = rpcURL
 		}
 
-		// write back (since net is a copy when pulled from map)
+		// IMPORTANT: write back (map value copy)
 		c.EthNetworks.Networks[netName] = net
 	}
 

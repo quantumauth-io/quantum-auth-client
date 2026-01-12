@@ -15,21 +15,17 @@ Ethereum:
       chainIdHex: "0xaa36a7"
       explorer: "https://sepolia.etherscan.io"
       rpcs:
-        - name: "Alchemy"
-          url: "https://eth-sepolia.g.alchemy.com/v2/"
-        - name: "Infura"
-          url: "https://sepolia.infura.io/v3/"
+        - name: ""
+          url: ""
 
-    base_sepolia:
+    base-sepolia:
       chainId: 84532
       chainIdHex: "0x14a34"
       explorer: "https://sepolia.basescan.org"
       entryPoint: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
       rpcs:
-        - name: "Alchemy"
-          url: "https://base-sepolia.g.alchemy.com/v2/"
-        - name: "Infura"
-          url: "https://base-sepolia.infura.io/v3/"
+        - name: ""
+          url: ""
 
     mainnet:
       chainId: 1
@@ -37,8 +33,8 @@ Ethereum:
       chainIdHex: "0x1"
       explorer: "https://etherscan.io"
       rpcs:
-        - name: "Infura"
-          url: "https://mainnet.infura.io/v3/"
+        - name: ""
+          url: ""
 
 DefaultAssets:
   Network:
@@ -46,7 +42,7 @@ DefaultAssets:
       - "0x0000000000000000000000000000000000000000"
       - "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8"
       - "0xf8Fb3713D459D7C1018BD0A49D19b4C44290EBE5"
-    base_sepolia:
+    base-sepolia:
       - "0x0000000000000000000000000000000000000000"
     mainnet:
       - "0x0000000000000000000000000000000000000000"

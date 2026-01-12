@@ -126,7 +126,6 @@ func (c *Client) RegisterUser(ctx context.Context, email string, password []byte
 
 // GetUserByEmailAndPassword wraps POST /users/me on the quantum-auth server.
 func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password []byte) (string, error) {
-	log.Info("getting user by email and password", "email", email)
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := getUserRequest{Email: email, PasswordB64: pwB64}
 	body, _ := json.Marshal(reqBody)
