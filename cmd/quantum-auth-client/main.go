@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/quantumauth-io/quantum-auth-client/internal/setup"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client"
 	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 
@@ -21,7 +21,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := setup.Run(ctx, setup.BuildInfo{
+	if err := quantum_auth_client.Run(ctx, quantum_auth_client.BuildInfo{
 		Version:   Version,
 		Commit:    Commit,
 		BuildDate: BuildDate,
@@ -32,6 +32,5 @@ func main() {
 
 	// graceful shutdown
 	<-ctx.Done()
-	log.Info("shutdown signal received")
 
 }

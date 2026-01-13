@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/chains"
 	utilsconfig "github.com/quantumauth-io/quantum-go-utils/config"
-	utilsEth "github.com/quantumauth-io/quantum-go-utils/ethrpc"
 )
 
 type ClientSettings struct {
@@ -25,12 +25,13 @@ type DefaultAssetsConfig struct {
 }
 type Config struct {
 	ClientSettings *ClientSettings
-	EthNetworks    *utilsEth.MultiConfig `mapstructure:"Ethereum"`
-	DefaultAssets  DefaultAssetsConfig   `yaml:"DefaultAssets" json:"defaultAssets"`
+	Networks       *chains.AllChainsConfig `mapstructure:"Ethereum"`
+	DefaultAssets  DefaultAssetsConfig     `yaml:"DefaultAssets" json:"defaultAssets"`
 }
 
-func infuraRPC(chain string, key string) string {
-	return fmt.Sprintf("https://%s.infura.io/v3/%s", chain, key)
+func infuraRPC(chain string, key string) (string, string) {
+	return fmt.Sprintf("https://%s.infura.io/v3/%s", chain, key),
+		fmt.Sprintf("wss://%s.infura.io/ws/v3/%s", chain, key)
 }
 
 func Load() (*Config, error) {
@@ -44,31 +45,80 @@ func Load() (*Config, error) {
 	return utilsconfig.ParseConfigWithEmbedded[Config](paths, EmbeddedConfigYAML)
 }
 
+func (c *Config) GetChainConfigByName(networkName string) (chains.ResolvedChain, error) {
+	networkName = strings.TrimSpace(networkName)
+	if networkName == "" {
+		return chains.ResolvedChain{}, errors.New("network name is empty")
+	}
+
+	net, ok := c.Networks.Networks[networkName]
+	if !ok {
+		return chains.ResolvedChain{}, fmt.Errorf("unknown network %q", networkName)
+	}
+
+	// pick RPC
+	var rpc *chains.RPC
+	if want := strings.TrimSpace(c.Networks.ActiveRPC); want != "" {
+		for i := range net.RPCs {
+			if strings.EqualFold(strings.TrimSpace(net.RPCs[i].Name), want) {
+				rpc = &net.RPCs[i]
+				break
+			}
+		}
+	}
+	if rpc == nil {
+		if len(net.RPCs) == 0 {
+			return chains.ResolvedChain{}, fmt.Errorf("network %q has no RPCs configured", networkName)
+		}
+		rpc = &net.RPCs[0]
+	}
+
+	if strings.TrimSpace(rpc.URL) == "" {
+		return chains.ResolvedChain{}, fmt.Errorf("network %q rpc %q url is empty", networkName, rpc.Name)
+	}
+	if strings.TrimSpace(rpc.WSS) == "" {
+		return chains.ResolvedChain{}, fmt.Errorf("network %q rpc %q wss is empty", networkName, rpc.Name)
+	}
+
+	return chains.ResolvedChain{
+		NetworkName: networkName,
+		ChainID:     uint64(net.ChainID),
+		ChainIDHex:  net.ChainIDHex,
+		EntryPoint:  net.EntryPoint,
+		Explorer:    net.Explorer,
+		RPCName:     rpc.Name,
+		URL:         rpc.URL,
+		WSS:         rpc.WSS,
+	}, nil
+}
+
 func (c *Config) InjectInfuraKey(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return errors.New("infura api key is empty")
 	}
 
-	for netName, net := range c.EthNetworks.Networks {
-		rpcURL := infuraRPC(netName, key)
+	for netName, net := range c.Networks.Networks {
+		rpcURL, rpcWSS := infuraRPC(netName, key)
 
 		// Ensure at least one RPC entry exists
 		if len(net.RPCs) == 0 {
-			net.RPCs = []utilsEth.RPC{
+			net.RPCs = []chains.RPC{
 				{
 					Name: "Infura",
 					URL:  rpcURL,
+					WSS:  rpcWSS,
 				},
 			}
 		} else {
 			// Fill or overwrite the first RPC slot
 			net.RPCs[0].Name = "Infura"
 			net.RPCs[0].URL = rpcURL
+			net.RPCs[0].WSS = rpcWSS
 		}
 
 		// IMPORTANT: write back (map value copy)
-		c.EthNetworks.Networks[netName] = net
+		c.Networks.Networks[netName] = net
 	}
 
 	return nil

@@ -1,0 +1,54 @@
+name: contracts
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  build-and-bindings:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "v1.5.1"
+
+      - name: Setup Go
+        uses: actions/helpers-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install abigen
+        run: |
+          go install github.com/ethereum/go-ethereum/cmd/abigen@v1.16.7
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Generate ABI/BIN (Foundry + solc for EntryPoint)
+        run: bash scripts/gen-solc.sh
+
+      - name: Generate Go bindings
+        run: bash scripts/gen-abigen.sh
+
+      - name: Ensure generated outputs are committed
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain -- abi bin bindings)" ]; then
+            echo "❌ Generated outputs changed."
+            echo "Run locally:"
+            echo "  bash scripts/gen-solc.sh && bash scripts/gen-abigen.sh"
+            echo "  git add abi bin bindings && git commit"
+            git --no-pager diff -- abi bin bindings
+            exit 1
+          fi

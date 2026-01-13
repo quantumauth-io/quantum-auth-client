@@ -5,18 +5,83 @@ ClientSettings:
   DeviceLabel: "default-device"
   Email: ""
 
+DurationBetweenGetLatestHeaderRequestsMilliseconds: 2000
+
 Ethereum:
   ActiveNetwork: "sepolia"
   ActiveRPC: "Infura"
+
   Networks:
+
+    mainnet:
+      chainId: 1
+      chainIdHex: "0x1"
+      explorer: "https://etherscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://mainnet.infura.io/v3/"
+          wss: "wss://mainnet.infura.io/ws/v3/"
+
     sepolia:
       chainId: 11155111
-      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       chainIdHex: "0xaa36a7"
       explorer: "https://sepolia.etherscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       rpcs:
-        - name: ""
-          url: ""
+        - name: "infura"
+          url: "https://sepolia.infura.io/v3/"
+          wss: "wss://sepolia.infura.io/ws/v3/"
+
+    arbitrum-mainnet:
+      chainId: 42161
+      chainIdHex: "0xa4b1"
+      explorer: "https://arbiscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://arbitrum-mainnet.infura.io/v3/"
+          wss: "wss://arbitrum-mainnet.infura.io/ws/v3/"
+
+    arbitrum-sepolia:
+      chainId: 421614
+      chainIdHex: "0x66eee"
+      explorer: "https://sepolia.arbiscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://arbitrum-sepolia.infura.io/v3/"
+          wss: "wss://arbitrum-sepolia.infura.io/ws/v3/"
+
+    optimism-mainnet:
+      chainId: 10
+      chainIdHex: "0xa"
+      explorer: "https://optimistic.etherscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://optimism-mainnet.infura.io/v3/"
+          wss: "wss://optimism-mainnet.infura.io/ws/v3/"
+
+    optimism-sepolia:
+      chainId: 11155420
+      chainIdHex: "0xaa37dc"
+      explorer: "https://sepolia-optimism.etherscan.io"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://optimism-sepolia.infura.io/v3/"
+          wss: "wss://optimism-sepolia.infura.io/ws/v3/"
+
+    base-mainnet:
+      chainId: 8453
+      chainIdHex: "0x2105"
+      explorer: "https://basescan.org"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://base-mainnet.infura.io/v3/"
+          wss: "wss://base-mainnet.infura.io/ws/v3/"
 
     base-sepolia:
       chainId: 84532
@@ -24,17 +89,49 @@ Ethereum:
       explorer: "https://sepolia.basescan.org"
       entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
       rpcs:
-        - name: ""
-          url: ""
+        - name: "infura"
+          url: "https://base-sepolia.infura.io/v3/"
+          wss: "wss://base-sepolia.infura.io/ws/v3/"
 
-    mainnet:
-      chainId: 1
+    polygon-mainnet:
+      chainId: 137
+      chainIdHex: "0x89"
+      explorer: "https://polygonscan.com"
       entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
-      chainIdHex: "0x1"
-      explorer: "https://etherscan.io"
       rpcs:
-        - name: ""
-          url: ""
+        - name: "infura"
+          url: "https://polygon-mainnet.infura.io/v3/"
+          wss: "wss://polygon-mainnet.infura.io/ws/v3/"
+
+    polygon-amoy:
+      chainId: 80002
+      chainIdHex: "0x13882"
+      explorer: "https://amoy.polygonscan.com"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://polygon-amoy.infura.io/v3/"
+          wss: "wss://polygon-amoy.infura.io/ws/v3/"
+
+    linea-mainnet:
+      chainId: 59144
+      chainIdHex: "0xe708"
+      explorer: "https://lineascan.build"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://linea-mainnet.infura.io/v3/"
+          wss: "wss://linea-mainnet.infura.io/ws/v3/"
+
+    linea-sepolia:
+      chainId: 59141
+      chainIdHex: "0xe705"
+      explorer: "https://sepolia.lineascan.build"
+      entryPoint: "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+      rpcs:
+        - name: "infura"
+          url: "https://linea-sepolia.infura.io/v3/"
+          wss: "wss://linea-sepolia.infura.io/ws/v3/"
 
 DefaultAssets:
   Network:

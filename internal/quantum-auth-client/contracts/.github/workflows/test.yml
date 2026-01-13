@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "stable"
+
+      - name: Forge build
+        run: forge build
+
+      - name: Forge test
+        run: forge test -vvv
+
+      - name: Gas snapshot (bench)
+        if: github.event_name == 'pull_request'
+        run: |
+          forge snapshot --match-test test_gas_validateUserOp_ -vvv

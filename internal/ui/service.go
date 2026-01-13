@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/quantumauth-io/quantum-auth-client/internal/httpui"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/httpui"
 	"github.com/quantumauth-io/quantum-go-utils/log"
 )
 

@@ -1,0 +1,2 @@
+GasValidateUserOpBench:test_gas_validateUserOp_hybrid() (gas: 30688)
+GasValidateUserOpBench:test_gas_validateUserOp_pq() (gas: 33879)
