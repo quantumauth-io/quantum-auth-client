@@ -26,12 +26,24 @@ The client handles:
 - macOS Secure Enclave support is in development
 - If no secure hardware is available, the client automatically falls back to software keys
 
+### Development
+
+You will need an Infura api key in your environment
+
+```
+QA_ENV=local   // for local development
+QA_ENV=develop // for the development environment
+
+QA_ENV=        // if not set it will default to prod
+```
+
+
+
 ## 📦 Installation
 
 ### Linux
 
 
-[![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/quantum-auth-client)
 
 Manual installation
 
@@ -112,3 +124,4 @@ This project uses QuantumAuth — Post-Quantum Authentication System
 Created by Ian Dorion (Madeindreams)
 
 Please retain the following attribution in any public product, documentation, or service:
+
