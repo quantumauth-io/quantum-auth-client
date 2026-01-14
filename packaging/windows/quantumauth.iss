@@ -13,14 +13,22 @@
   #define MyAppSourceDir "..\..\dist\windows-amd64"
 #endif
 
-; --- sanitize version for filenames (strip quotes, strip leading 'v') ---
+; --- sanitize version for filenames ---
 #define _Ver0 StringChange(MyAppVersion, '"', '')
 #if Copy(_Ver0, 1, 1) == "v"
   #define MyAppVersionClean Copy(_Ver0, 2)
 #else
   #define MyAppVersionClean _Ver0
 #endif
-; ---------------------------------------------------------------
+
+; Only allow filename-safe chars: replace dots/spaces with underscores
+#define MyAppVersionFile StringChange(MyAppVersionClean, ".", "_")
+#define MyAppVersionFile StringChange(MyAppVersionFile, " ", "_")
+; --------------------------------------
+
+#pragma message "MyAppVersion=" + MyAppVersion
+#pragma message "MyAppVersionClean=" + MyAppVersionClean
+#pragma message "MyAppVersionFile=" + MyAppVersionFile
 
 [Setup]
 AppId={{A2D6B6D7-6C7C-4E64-9D3B-9F9C5C9A2A11}
@@ -35,7 +43,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 Compression=lzma
 SolidCompression=yes
-OutputBaseFilename=QuantumAuth-Setup-{#MyAppVersionClean}-x64
+OutputBaseFilename=QuantumAuth-Setup-{#MyAppVersionFile}-x64
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 ChangesEnvironment=yes
