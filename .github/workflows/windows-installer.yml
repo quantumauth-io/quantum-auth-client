@@ -31,6 +31,24 @@ jobs:
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "ver=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+      - name: Debug - show current commit
+        shell: pwsh
+        run: |
+         git rev-parse HEAD
+         git show -s --format="%H %s" HEAD
+
+      - name: Debug - print the iss line and file hash
+        shell: pwsh
+        run: |
+         Write-Host "ISS path:"
+         Resolve-Path packaging/windows/quantumauth.iss
+         Write-Host "OutputBase line:"
+         Select-String -Path packaging/windows/quantumauth.iss -Pattern "OutputBaseFile"
+         Write-Host "First 60 lines:"
+         Get-Content packaging/windows/quantumauth.iss -TotalCount 60
+         Write-Host "SHA256:"
+         Get-FileHash packaging/windows/quantumauth.iss -Algorithm SHA256      
+
       - name: Download Windows release asset
         shell: pwsh
         env:
