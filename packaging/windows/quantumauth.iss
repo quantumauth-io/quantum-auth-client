@@ -78,6 +78,6 @@ begin
     exit;
   end;
 
-  ; naive contains check is ok here; keep it simple
+  // naive contains check is ok here; keep it simple
   Result := Pos(';' + Lowercase(NewPath) + ';', ';' + Lowercase(Path) + ';') = 0;
 end;
