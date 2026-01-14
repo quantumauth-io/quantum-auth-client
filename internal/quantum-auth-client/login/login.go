@@ -98,10 +98,10 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 		}
 	}
 
-	// No file => first-time helpers (no password prompt yet)
+	// No file => first-time
 	if foundPath == "" {
 		log.Info("no QuantumAuth credentials file found, running first-time helpers", "write_path", qas.path)
-		state, pwd, err := qas.handleMissingCreds() // this should set password as part of helpers
+		state, pwd, err := qas.handleMissingCreds()
 		if err != nil {
 			return nil, nil, err
 		}

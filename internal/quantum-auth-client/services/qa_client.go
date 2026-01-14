@@ -228,10 +228,10 @@ func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, pa
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode == http.StatusCreated {
+	if resp.StatusCode == http.StatusOK {
 		var out getUserResponse
 		if err = json.Unmarshal(bodyBytes, &out); err != nil {
-			return "", fmt.Errorf("decode registerUser response: %w", err)
+			return "", fmt.Errorf("decode ME response: %w", err)
 		}
 		return out.UserID, nil
 	}
