@@ -2,7 +2,12 @@ name: publish-apt
 
 on:
   release:
-    types: [published]
+    types: [published, prereleased, released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to APT (e.g. v0.0.4)"
+        required: true
 
 permissions:
   contents: read
@@ -37,8 +42,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p assets
-          # Download only debs from this release
-          gh release download "${{ github.event.release.tag_name }}" \
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "Using tag: $TAG"
+
+          gh release download "$TAG" \
             --repo "${{ github.repository }}" \
             --dir assets \
             --pattern "*.deb"
