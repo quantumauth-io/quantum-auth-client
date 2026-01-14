@@ -20,14 +20,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve tag
+      - name: Resolve tag + version
         id: tag
         shell: pwsh
         run: |
           $tag = "${{ github.event.release.tag_name }}"
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ inputs.tag }}" }
           if ([string]::IsNullOrWhiteSpace($tag)) { throw "No tag provided" }
+          $ver = $tag.TrimStart("v")
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "ver=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Download Windows release asset
         shell: pwsh
@@ -53,8 +55,9 @@ jobs:
         with:
           path: packaging/windows/quantumauth.iss
           options: >
-            /DMyAppVersion=${{ steps.tag.outputs.tag }}
+            /DMyAppVersion=${{ steps.tag.outputs.ver }}
             /DMyAppSourceDir=${{ github.workspace }}\dist\windows-amd64
+      
 
       - name: Upload installer to GitHub Release
         shell: pwsh
