@@ -1,0 +1,67 @@
+name: windows-installer
+
+on:
+  release:
+    types: [published, prereleased, released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build installer for (e.g. v0.0.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ inputs.tag }}" }
+          if ([string]::IsNullOrWhiteSpace($tag)) { throw "No tag provided" }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download Windows release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          New-Item -ItemType Directory -Force -Path assets | Out-Null
+          gh release download $tag --dir assets --pattern "*windows*amd64*.zip"
+          Get-ChildItem assets
+
+      - name: Extract artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows-amd64 | Out-Null
+          $zip = Get-ChildItem assets\*.zip | Select-Object -First 1
+          if (-not $zip) { throw "Windows amd64 zip not found in release assets" }
+          Expand-Archive -Path $zip.FullName -DestinationPath dist\windows-amd64 -Force
+          Get-ChildItem dist\windows-amd64
+
+      - name: Build installer (Inno Setup)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: packaging/windows/quantumauth.iss
+          options: >
+            /DMyAppVersion=${{ steps.tag.outputs.tag }}
+            /DMyAppSourceDir=${{ github.workspace }}\dist\windows-amd64
+
+      - name: Upload installer to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $out = Get-ChildItem -Recurse -Filter "QuantumAuth-Setup-*.exe" | Select-Object -First 1
+          if (-not $out) { throw "Installer EXE not found" }
+          gh release upload $tag $out.FullName --clobber

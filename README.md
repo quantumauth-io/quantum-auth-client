@@ -43,38 +43,29 @@ QA_ENV=        // if not set it will default to prod
 
 ### Linux
 
-
-
-Manual installation
-
-1. **Download** the latest release archive (`.tar.gz`) from:  
-   https://github.com/quantumauth-io/quantum-auth-client/releases
-
-2. **Extract** the archive:
-
-```sh
-tar -xvf quantum-auth-client_<version>_linux_<arch>.tar.gz
+Creates the standard directory where APT stores trusted repository signing keys.
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
 ```
-
-3. **Make the installer executable:**
-
-```sh
-chmod +x install.sh
+Downloads the QuantumAuth APT repository public signing key and installs it for package verification.
+```bash
+curl -fsSL https://apt.quantumauth.io/keyrings/quantumauth.gpg \
+| sudo tee /etc/apt/keyrings/quantumauth.gpg > /dev/null
 ```
-
-4. **Run the installer:**
-
-```sh
-./install.sh
+Registers the QuantumAuth APT repository as a trusted package source for amd64 and arm64 systems.
+```bash
+echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/quantumauth.gpg] https://apt.quantumauth.io stable main" \
+| sudo tee /etc/apt/sources.list.d/quantumauth.list > /dev/null
 ```
-
-5. Start the client:
-
-```sh
-quantum-auth-client run
+Refreshes the package index and installs the QuantumAuth client from the signed repository.
+```bash
+sudo apt update
+sudo apt install quantum-auth-client
 ```
-
----
+Verifies the installation and prints the installed client version, commit, and build date.
+```bash
+quantumauth --version
+```
 
 
 ## 🛡 Security
