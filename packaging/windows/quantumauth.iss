@@ -33,7 +33,7 @@
 [Setup]
 AppId={{A2D6B6D7-6C7C-4E64-9D3B-9F9C5C9A2A11}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
+AppVersion={#MyAppVersionClean}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -43,7 +43,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 Compression=lzma
 SolidCompression=yes
-OutputBaseFilename=QuantumAuth-Setup-{#MyAppVersionFile}-x64
+OutputBaseFilename=QuantumAuth-Setup-x64
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 ChangesEnvironment=yes

@@ -75,6 +75,17 @@ jobs:
           options: >
             /DMyAppVersion=${{ steps.tag.outputs.ver }}
             /DMyAppSourceDir=${{ github.workspace }}\dist\windows-amd64
+
+      - name: Rename installer with version
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.tag.outputs.ver }}"
+          $src = Get-ChildItem -Recurse -Filter "QuantumAuth-Setup-x64.exe" | Select-Object -First 1
+          if (-not $src) { throw "Installer EXE not found after compilation" }
+
+          $dst = Join-Path $src.Directory.FullName ("QuantumAuth-Setup-{0}-x64.exe" -f $ver)
+          Move-Item -Force $src.FullName $dst
+          "installer=$dst" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       
 
       - name: Upload installer to GitHub Release
@@ -83,6 +94,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
-          $out = Get-ChildItem -Recurse -Filter "QuantumAuth-Setup-*.exe" | Select-Object -First 1
-          if (-not $out) { throw "Installer EXE not found" }
+          $ver = "${{ steps.tag.outputs.ver }}"
+          $out = Get-ChildItem -Recurse -Filter ("QuantumAuth-Setup-{0}-x64.exe" -f $ver) | Select-Object -First 1
+          if (-not $out) { throw "Renamed installer EXE not found" }
           gh release upload $tag $out.FullName --clobber
