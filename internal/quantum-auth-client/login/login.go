@@ -1,7 +1,6 @@
 package login
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -12,11 +11,11 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/constants"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/ethdevice"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/userwallet"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/helpers"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/securefile"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/services"
 	"github.com/quantumauth-io/quantum-go-utils/log"
 	"github.com/quantumauth-io/quantum-go-utils/tpmdevice"
-	"golang.org/x/term"
 )
 
 type fileData struct {
@@ -112,7 +111,7 @@ func (qas *QAClientLoginService) EnsureLogin() (*State, []byte, error) {
 	// File exists => prompt + decrypt
 	qas.path = foundPath
 
-	pwd, err := PromptPassword("QuantumAuth password: ")
+	pwd, err := helpers.PromptPassword("QuantumAuth password: ")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -247,16 +246,16 @@ func (qas *QAClientLoginService) handleMissingCreds() (*State, []byte, error) {
 func (qas *QAClientLoginService) firstTimeSetup() (*State, []byte, error) {
 	fmt.Println("=== QuantumAuth first-time helpers ===")
 
-	email := promptLineWithDefault("Email", qas.defaultEmail)
-	username := promptLineWithDefault("Username", guessUsername(email))
-	deviceLabel := promptLineWithDefault("Device label", qas.defaultDeviceLabel)
+	email := helpers.PromptLineWithDefault("Email", qas.defaultEmail)
+	username := helpers.PromptLineWithDefault("Username", guessUsername(email))
+	deviceLabel := helpers.PromptLineWithDefault("Device label", qas.defaultDeviceLabel)
 
-	pwd, err := PromptPassword("Choose a password: ")
+	pwd, err := helpers.PromptPassword("Choose a password: ")
 	if err != nil {
 		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
 
-	infuraKey, err := promptInfuraAPIKey()
+	infuraKey, err := helpers.PromptInfuraAPIKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("read infura api key: %w", err)
 	}
@@ -290,15 +289,15 @@ func (qas *QAClientLoginService) firstTimeSetup() (*State, []byte, error) {
 func (qas *QAClientLoginService) addDeviceToExistingAccount() (*State, []byte, error) {
 	fmt.Println("=== Add this device to your QuantumAuth account ===")
 
-	email := promptLineWithDefault("Email", qas.defaultEmail)
-	deviceLabel := promptLineWithDefault("Device label", qas.defaultDeviceLabel)
+	email := helpers.PromptLineWithDefault("Email", qas.defaultEmail)
+	deviceLabel := helpers.PromptLineWithDefault("Device label", qas.defaultDeviceLabel)
 
-	password, err := PromptPassword("Account password: ")
+	password, err := helpers.PromptPassword("Account password: ")
 	if err != nil {
 		return nil, nil, fmt.Errorf("read password: %w", err)
 	}
 
-	infuraKey, err := promptInfuraAPIKey()
+	infuraKey, err := helpers.PromptInfuraAPIKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("read infura api key: %w", err)
 	}
@@ -362,66 +361,6 @@ func (qas *QAClientLoginService) persistCredsAndState(
 	return state, password, nil
 }
 
-func promptInfuraAPIKey() (string, error) {
-	fmt.Println()
-	fmt.Println("=== Ethereum RPC Provider Setup ===")
-	fmt.Println("QuantumAuth uses Infura for default Ethereum RPC access.")
-	fmt.Println()
-	fmt.Println("Create a free Infura account and API key here:")
-	fmt.Println("👉 https://www.infura.io/register")
-	fmt.Println()
-
-	for {
-		key := promptLineWithDefault("Enter your Infura API Key", "")
-
-		key = strings.TrimSpace(key)
-		if key == "" {
-			fmt.Println("Infura API key cannot be empty.")
-			continue
-		}
-
-		return key, nil
-	}
-}
-
-func promptLineWithDefault(label, def string) string {
-	if def != "" {
-		fmt.Printf("%s [%s]: ", label, def)
-	} else {
-		fmt.Printf("%s: ", label)
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return def
-	}
-
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return def
-	}
-	return line
-}
-
-func PromptPassword(prompt string) ([]byte, error) {
-	_, _ = fmt.Fprint(os.Stderr, prompt)
-
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-	_, _ = fmt.Fprintln(os.Stderr) // best-effort newline
-
-	if err != nil {
-		for i := range pw {
-			pw[i] = 0
-		}
-		return nil, fmt.Errorf("password input failed: %w", err)
-	}
-	if len(pw) == 0 {
-		return nil, fmt.Errorf("password cannot be empty")
-	}
-	return pw, nil
-}
-
 func guessUsername(email string) string {
 	if i := strings.IndexByte(email, '@'); i > 0 {
 		return email[:i]
@@ -451,10 +390,4 @@ func (qas *QAClientLoginService) SetCredsPath(path string) {
 		return
 	}
 	qas.path = path
-}
-
-func Zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }
