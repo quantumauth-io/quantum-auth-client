@@ -149,7 +149,7 @@ func Run(ctx context.Context, build BuildInfo) error {
 	if err != nil {
 		return err
 	}
-	defer login.Zero(password)
+	defer helpers.ZeroBytes(password)
 
 	// Inject Infura key (again is fine; keeps main path consistent)
 	if err := cfg.InjectInfuraKey(state.InfuraAPIKey); err != nil {
@@ -308,9 +308,9 @@ func Run(ctx context.Context, build BuildInfo) error {
 	defer cancel()
 
 	if shutdownErr := httpServer.Shutdown(shutdownCtx); shutdownErr != nil {
-		log.Error("HTTP server shutdown failed", "error", shutdownErr)
+		log.Error("QA Client shutdown failed", "error", shutdownErr)
 	} else {
-		log.Info("HTTP server gracefully stopped")
+		log.Info("QA Client gracefully stopped")
 	}
 
 	return nil

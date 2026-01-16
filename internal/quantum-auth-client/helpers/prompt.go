@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/quantumauth-io/quantum-go-utils/log"
 	"golang.org/x/term"
 )
 
@@ -23,17 +24,29 @@ func PromptInfuraAPIKey() (string, error) {
 		key = strings.TrimSpace(key)
 
 		if key == "" {
-			fmt.Println("❌ Infura API key cannot be empty.")
+			log.Warn(
+				"QA Client",
+				"event", "infura_api_key_validation_failed",
+				"reason", "empty",
+			)
 			continue
 		}
 
 		if len(key) != 32 {
-			fmt.Println("❌ Invalid Infura API key length. Expected 32 hexadecimal characters.")
+			log.Warn(
+				"QA Client",
+				"event", "infura_api_key_validation_failed",
+				"reason", "invalid_length",
+			)
 			continue
 		}
 
 		if !isHexString(key) {
-			fmt.Println("❌ Invalid Infura API key format. Only hexadecimal characters (0-9, a-f) are allowed.")
+			log.Warn(
+				"QA Client",
+				"event", "infura_api_key_validation_failed",
+				"reason", "invalid_format",
+			)
 			continue
 		}
 
@@ -75,29 +88,59 @@ func PromptLineWithDefault(label, def string) string {
 }
 
 func PromptPassword(prompt string) ([]byte, error) {
-	_, _ = fmt.Fprint(os.Stderr, prompt)
+	for {
+		_, _ = fmt.Fprint(os.Stderr, prompt)
 
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-	_, _ = fmt.Fprintln(os.Stderr) // best-effort newline
+		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		_, _ = fmt.Fprintln(os.Stderr) // newline after hidden input
 
-	if err != nil {
-		ZeroBytes(pw)
-		return nil, fmt.Errorf("password input failed: %w", err)
-	}
-
-	if len(pw) < 8 {
-		ZeroBytes(pw)
-		return nil, fmt.Errorf("password must be at least 8 characters long")
-	}
-
-	for _, b := range pw {
-		if !IsAllowedPasswordChar(b) {
+		if err != nil {
 			ZeroBytes(pw)
-			return nil, fmt.Errorf(
-				"password contains invalid characters (use letters, numbers, and special characters only)",
+			log.Warn(
+				"QA Client",
+				"event", "password_read_failed",
+				"reason", err.Error(),
 			)
+			return nil, fmt.Errorf("password input failed: %w", err)
 		}
-	}
 
-	return pw, nil
+		if len(pw) == 0 {
+			ZeroBytes(pw)
+			log.Warn(
+				"QA Client",
+				"event", "password_validation_failed",
+				"reason", "empty",
+			)
+			continue
+		}
+
+		if len(pw) < 8 {
+			ZeroBytes(pw)
+			log.Warn(
+				"QA Client",
+				"event", "password_validation_failed",
+				"reason", "too_short",
+			)
+			continue
+		}
+
+		valid := true
+		for _, b := range pw {
+			if !IsAllowedPasswordChar(b) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			ZeroBytes(pw)
+			log.Warn(
+				"QA Client",
+				"event", "password_validation_failed",
+				"reason", "invalid_characters",
+			)
+			continue
+		}
+
+		return pw, nil
+	}
 }
