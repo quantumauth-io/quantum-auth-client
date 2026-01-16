@@ -1,0 +1,164 @@
+name: publish-apt
+
+on:
+  release:
+    types: [published, prereleased, released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to APT (e.g. v0.0.4)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg dpkg-dev apt-utils
+
+      - name: Import GPG signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+
+          # allow non-interactive passphrase use (loopback)
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          gpgconf --kill gpg-agent || true
+
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format=long
+
+      - name: Download release assets (.deb)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p assets
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "Using tag: $TAG"
+
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --dir assets \
+            --pattern "*.deb"
+
+          ls -lah assets
+
+      - name: Clone APT repo (gh-pages)
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+        run: |
+          rm -rf apt-repo
+          git clone --branch gh-pages --single-branch \
+            "https://x-access-token:${APT_REPO_TOKEN}@github.com/quantumauth-io/apt.git" apt-repo
+
+      - name: Copy new packages into pool/
+        run: |
+          set -euo pipefail
+          mkdir -p apt-repo/pool/main/amd64 apt-repo/pool/main/arm64
+
+          shopt -s nullglob
+          for f in assets/*.deb; do
+            # Detect arch from the .deb metadata
+            arch="$(dpkg-deb -f "$f" Architecture)"
+            case "$arch" in
+              amd64) dest="apt-repo/pool/main/amd64" ;;
+              arm64) dest="apt-repo/pool/main/arm64" ;;
+              *)
+                echo "Unsupported deb arch: $arch ($f)"
+                exit 1
+                ;;
+            esac
+            cp -f "$f" "$dest/"
+          done
+
+          ls -lah apt-repo/pool/main/amd64 || true
+          ls -lah apt-repo/pool/main/arm64 || true
+
+      - name: Generate Packages and Release metadata
+        run: |
+          set -euo pipefail
+
+          # Create dists layout
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          mkdir -p apt-repo/dists/stable/main/binary-arm64
+
+          # Packages (amd64)
+          (cd apt-repo && \
+            dpkg-scanpackages -m pool/main/amd64 /dev/null \
+              > dists/stable/main/binary-amd64/Packages)
+          gzip -9 -c apt-repo/dists/stable/main/binary-amd64/Packages \
+            > apt-repo/dists/stable/main/binary-amd64/Packages.gz
+
+          # Packages (arm64)
+          (cd apt-repo && \
+            dpkg-scanpackages -m pool/main/arm64 /dev/null \
+              > dists/stable/main/binary-arm64/Packages)
+          gzip -9 -c apt-repo/dists/stable/main/binary-arm64/Packages \
+            > apt-repo/dists/stable/main/binary-arm64/Packages.gz
+
+          # Release file at dists/stable
+          cat > apt-repo/apt-ftparchive.conf <<'EOF'
+          Dir {
+            ArchiveDir ".";
+          };
+          Default {
+            Packages::Compress ". gzip";
+          };
+          TreeDefault {
+            BinCacheDB "packages.db";
+          };
+          EOF
+
+          (cd apt-repo && \
+            apt-ftparchive release dists/stable > dists/stable/Release)
+
+      - name: Sign Release (InRelease + Release.gpg)
+        env:
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          # Pick the first secret key fingerprint
+          key_fpr="$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')"
+          echo "Using signing key: $key_fpr"
+
+          # Clear-sign -> InRelease
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$APT_GPG_PASSPHRASE" \
+            --local-user "$key_fpr" \
+            --clearsign \
+            -o apt-repo/dists/stable/InRelease \
+            apt-repo/dists/stable/Release
+
+          # Detached signature -> Release.gpg
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$APT_GPG_PASSPHRASE" \
+            --local-user "$key_fpr" \
+            --detach-sign \
+            -o apt-repo/dists/stable/Release.gpg \
+            apt-repo/dists/stable/Release
+
+      - name: Commit and push to gh-pages
+        run: |
+          set -euo pipefail
+          cd apt-repo
+          git config user.name "quantumauth-bot"
+          git config user.email "bot@quantumauth.io"
+
+          git add -A
+          git status --porcelain
+
+          git commit -m "APT update for ${{ github.event.release.tag_name }}" || echo "No changes to commit"
+          git push

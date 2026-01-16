@@ -1,0 +1,100 @@
+name: windows-installer
+
+on:
+  release:
+    types: [published, prereleased, released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build installer for (e.g. v0.0.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag + version
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ inputs.tag }}" }
+          if ([string]::IsNullOrWhiteSpace($tag)) { throw "No tag provided" }
+          $ver = $tag.TrimStart("v")
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "ver=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Debug - show current commit
+        shell: pwsh
+        run: |
+         git rev-parse HEAD
+         git show -s --format="%H %s" HEAD
+
+      - name: Debug - print the iss line and file hash
+        shell: pwsh
+        run: |
+         Write-Host "ISS path:"
+         Resolve-Path packaging/windows/quantumauth.iss
+         Write-Host "OutputBase line:"
+         Select-String -Path packaging/windows/quantumauth.iss -Pattern "OutputBaseFile"
+         Write-Host "First 60 lines:"
+         Get-Content packaging/windows/quantumauth.iss -TotalCount 60
+         Write-Host "SHA256:"
+         Get-FileHash packaging/windows/quantumauth.iss -Algorithm SHA256      
+
+      - name: Download Windows release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          New-Item -ItemType Directory -Force -Path assets | Out-Null
+          gh release download $tag --dir assets --pattern "*windows*amd64*.zip"
+          Get-ChildItem assets
+
+      - name: Extract artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows-amd64 | Out-Null
+          $zip = Get-ChildItem assets\*.zip | Select-Object -First 1
+          if (-not $zip) { throw "Windows amd64 zip not found in release assets" }
+          Expand-Archive -Path $zip.FullName -DestinationPath dist\windows-amd64 -Force
+          Get-ChildItem dist\windows-amd64
+
+      - name: Build installer (Inno Setup)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: packaging/windows/quantumauth.iss
+          options: >
+            /DMyAppVersion=${{ steps.tag.outputs.ver }}
+            /DMyAppSourceDir=${{ github.workspace }}\dist\windows-amd64
+
+      - name: Rename installer with version
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.tag.outputs.ver }}"
+          $src = Get-ChildItem -Recurse -Filter "QuantumAuth-Setup-x64.exe" | Select-Object -First 1
+          if (-not $src) { throw "Installer EXE not found after compilation" }
+
+          $dst = Join-Path $src.Directory.FullName ("QuantumAuth-Setup-{0}-x64.exe" -f $ver)
+          Move-Item -Force $src.FullName $dst
+          "installer=$dst" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      
+
+      - name: Upload installer to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $ver = "${{ steps.tag.outputs.ver }}"
+          $out = Get-ChildItem -Recurse -Filter ("QuantumAuth-Setup-{0}-x64.exe" -f $ver) | Select-Object -First 1
+          if (-not $out) { throw "Renamed installer EXE not found" }
+          gh release upload $tag $out.FullName --clobber
