@@ -64,3 +64,21 @@ func NormalizeHex0x(s string) string {
 	}
 	return "0x" + s
 }
+
+func ZeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+func IsAllowedPasswordChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z':
+	case b >= 'A' && b <= 'Z':
+	case b >= '0' && b <= '9':
+	case b >= 33 && b <= 126: // printable ASCII, excludes space (32)
+	default:
+		return false
+	}
+	return true
+}

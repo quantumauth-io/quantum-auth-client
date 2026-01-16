@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 func PromptInfuraAPIKey() (string, error) {
@@ -18,15 +20,38 @@ func PromptInfuraAPIKey() (string, error) {
 
 	for {
 		key := PromptLineWithDefault("Enter your Infura API Key", "")
-
 		key = strings.TrimSpace(key)
+
 		if key == "" {
-			fmt.Println("Infura API key cannot be empty.")
+			fmt.Println("❌ Infura API key cannot be empty.")
+			continue
+		}
+
+		if len(key) != 32 {
+			fmt.Println("❌ Invalid Infura API key length. Expected 32 hexadecimal characters.")
+			continue
+		}
+
+		if !isHexString(key) {
+			fmt.Println("❌ Invalid Infura API key format. Only hexadecimal characters (0-9, a-f) are allowed.")
 			continue
 		}
 
 		return key, nil
 	}
+}
+
+func isHexString(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func PromptLineWithDefault(label, def string) string {
@@ -47,4 +72,32 @@ func PromptLineWithDefault(label, def string) string {
 		return def
 	}
 	return line
+}
+
+func PromptPassword(prompt string) ([]byte, error) {
+	_, _ = fmt.Fprint(os.Stderr, prompt)
+
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	_, _ = fmt.Fprintln(os.Stderr) // best-effort newline
+
+	if err != nil {
+		ZeroBytes(pw)
+		return nil, fmt.Errorf("password input failed: %w", err)
+	}
+
+	if len(pw) < 8 {
+		ZeroBytes(pw)
+		return nil, fmt.Errorf("password must be at least 8 characters long")
+	}
+
+	for _, b := range pw {
+		if !IsAllowedPasswordChar(b) {
+			ZeroBytes(pw)
+			return nil, fmt.Errorf(
+				"password contains invalid characters (use letters, numbers, and special characters only)",
+			)
+		}
+	}
+
+	return pw, nil
 }
