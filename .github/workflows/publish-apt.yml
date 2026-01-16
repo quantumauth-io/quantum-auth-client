@@ -1,8 +1,9 @@
 name: publish-apt
 
 on:
-  release:
-    types: [published, prereleased, released]
+  workflow_run:
+    workflows: ["release"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
