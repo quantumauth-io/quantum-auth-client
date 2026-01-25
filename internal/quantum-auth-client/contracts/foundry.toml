@@ -5,5 +5,12 @@ libs = ["lib"]
 
 solc_version = "0.8.28"
 optimizer = true
-optimizer_runs = 200000
+optimizer_runs = 200
 via_ir = true
+
+[lint]
+exclude_lints = [
+    "unaliased-plain-import",
+    "mixed-case-function",
+    "asm-keccak256"
+]

@@ -30,11 +30,14 @@ test -f abi/EntryPoint.abi.json
 test -f bin/EntryPoint.bin
 test -f abi/QAERC20.abi.json
 test -f bin/QAERC20.bin
+test -f abi/QAEscrow.abi.json
+test -f bin/QAEscrow.bin
 
 mkdir -p bindings/go/quantumauthaccount
 mkdir -p bindings/go/tpmverifiersecp256k1
 mkdir -p bindings/go/entrypoint
 mkdir -p bindings/go/qaerc20
+mkdir -p bindings/go/qaescrow
 
 "$ABIGEN" \
   --abi abi/QuantumAuthAccount.abi.json \
@@ -63,3 +66,10 @@ mkdir -p bindings/go/qaerc20
   --pkg qaerc20 \
   --type QAERC20 \
   --out bindings/go/qaerc20/qaerc20.go
+
+  "$ABIGEN" \
+    --abi abi/QAEscrow.abi.json \
+    --bin bin/QAEscrow.bin \
+    --pkg qaescrow \
+    --type QAEscrow \
+    --out bindings/go/qaescrow/qaescrow.go

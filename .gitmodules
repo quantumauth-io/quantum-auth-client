@@ -1,4 +1,3 @@
-[submodule "internal/contracts"]
-	path = internal/contracts
+[submodule "internal/quantum-auth-client/contracts"]
+	path = internal/quantum-auth-client/contracts
 	url = git@github.com:quantumauth-io/quantum-auth-contracts.git
-
