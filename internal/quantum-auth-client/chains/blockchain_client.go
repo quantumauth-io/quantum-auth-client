@@ -2,29 +2,28 @@ package chains
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/errors"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/quantumauth-io/quantum-go-utils/log"
-	"github.com/quantumauth-io/quantum-go-utils/qa_evm"
+	"github.com/quantumauth-io/quantum-go-utils/evm"
 	"github.com/quantumauth-io/quantum-go-utils/retry"
 )
 
 type BlockchainClientWithCache struct {
 	latestHeader             atomic.Pointer[types.Header]
 	timeReceivedLatestHeader atomic.Pointer[time.Time]
-	qa_evm.BlockchainClient
+	evm.BlockchainClient
 }
 
 func NewBlockchainClientWithCache(ctx context.Context, url string,
 	durationBetweenGetLatestHeaderRequestsMilliseconds int) (*BlockchainClientWithCache, error) {
 	eclient, err := ethclient.DialContext(ctx, url)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to connect to blockchain at %s", url)
+		return nil, fmt.Errorf("failed to connect to blockchain at %s", url)
 	}
 
 	cc := &BlockchainClientWithCache{
@@ -55,7 +54,6 @@ func maintainLatestHeaderFromChain(ctx context.Context, cc *BlockchainClientWith
 		timer.Reset(duration)
 		select {
 		case <-ctx.Done():
-			log.Info("maintainLatestHeaderFromChain goroutine exiting", "numCallsToChain", numCallsToChain)
 			return
 		case <-timer.C:
 			_, _ = retry.Retry(ctx, cfg,
@@ -63,7 +61,7 @@ func maintainLatestHeaderFromChain(ctx context.Context, cc *BlockchainClientWith
 					numCallsToChain++
 					return nil, cc.getLatestHeaderFromChain(ctx)
 				},
-				nil, // always retry
+				nil,
 				"get latest header from chain")
 		}
 	}
@@ -72,7 +70,7 @@ func maintainLatestHeaderFromChain(ctx context.Context, cc *BlockchainClientWith
 func (b *BlockchainClientWithCache) getLatestHeaderFromChain(ctx context.Context) error {
 	header, err := b.BlockchainClient.HeaderByNumber(ctx, nil)
 	if err != nil {
-		return errors.Wrap(err, "Failed to get latest HeaderByNumber from chain")
+		return fmt.Errorf("failed to get latest HeaderByNumber from chain %w", err)
 	}
 	end := time.Now().UTC()
 	b.latestHeader.Store(header)
