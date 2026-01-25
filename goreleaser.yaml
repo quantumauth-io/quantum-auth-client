@@ -15,10 +15,10 @@ builds:
     goos: [linux, windows]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Commit={{.Commit}}
-      - -X main.BuildDate={{.Date}}
+  - -s -w
+    - -X github.com/quantumauth-io/quantum-auth-client/internal/buildinfo.Version={{.Version}}
+    - -X github.com/quantumauth-io/quantum-auth-client/internal/buildinfo.Commit={{.ShortCommit}}
+    - -X github.com/quantumauth-io/quantum-auth-client/internal/buildinfo.Date={{.Date}}
 
 archives:
   - id: tgz
@@ -39,7 +39,7 @@ nfpms:
     package_name: quantum-auth-client
     file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
     vendor: "quantumauth-io"
-    maintainer: "QuantumAuth <maintainer@quantumauth.io>"
+    maintainer: "QuantumAuth <ian.dorion@quantumauth.io>"
     homepage: "https://quantumauth.io"
     license: "Apache-2.0"
     description: "QuantumAuth client"

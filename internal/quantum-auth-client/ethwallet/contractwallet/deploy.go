@@ -7,8 +7,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/quantumauth-io/quantum-go-utils/evm"
 	"github.com/quantumauth-io/quantum-go-utils/log"
-	"github.com/quantumauth-io/quantum-go-utils/qa_evm"
 
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/contracts/bindings/go/quantumauthaccount"
 	tpmverifier "github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/contracts/bindings/go/tpmverifiersecp256k1"
@@ -23,13 +23,7 @@ type AccountDeployParams struct {
 	TPMKeyID    [32]byte
 }
 
-// DeployTPMVerifierSecp256k1 deploys TPMVerifierSecp256k1 using deployer wallet.
-// Returns deployed contract address + deployment tx hash.
-func DeployTPMVerifierSecp256k1(
-	ctx context.Context,
-	client qa_evm.BlockchainClient,
-	deployer wtypes.Wallet,
-) (common.Address, common.Hash, error) {
+func DeployTPMVerifierSecp256k1(ctx context.Context, client evm.BlockchainClient, deployer wtypes.Wallet) (common.Address, common.Hash, error) {
 
 	if client == nil || deployer == nil {
 		return common.Address{}, common.Hash{}, fmt.Errorf("deploy: missing eth client or deployer")
@@ -45,10 +39,6 @@ func DeployTPMVerifierSecp256k1(
 		return common.Address{}, common.Hash{}, err
 	}
 
-	if err != nil {
-		return common.Address{}, common.Hash{}, err
-	}
-
 	addr, tx, _, err := tpmverifier.DeployTPMVerifierSecp256k1(opts, client)
 	if err != nil {
 		return common.Address{}, common.Hash{}, fmt.Errorf("deploy TPMVerifierSecp256k1: %w", err)
@@ -59,14 +49,7 @@ func DeployTPMVerifierSecp256k1(
 	return addr, tx.Hash(), nil
 }
 
-// DeployQuantumAuthAccount deploys QuantumAuthAccount using deployer wallet.
-// Returns deployed contract address + deployment tx hash.
-func DeployQuantumAuthAccount(
-	ctx context.Context,
-	client qa_evm.BlockchainClient,
-	deployer wtypes.Wallet,
-	p AccountDeployParams,
-) (common.Address, common.Hash, error) {
+func DeployQuantumAuthAccount(ctx context.Context, client evm.BlockchainClient, deployer wtypes.Wallet, params AccountDeployParams) (common.Address, common.Hash, error) {
 
 	if client == nil || deployer == nil {
 		return common.Address{}, common.Hash{}, fmt.Errorf("deploy: missing eth client or deployer")
@@ -85,11 +68,11 @@ func DeployQuantumAuthAccount(
 	addr, tx, _, err := quantumauthaccount.DeployQuantumAuthAccount(
 		opts,
 		client,
-		p.EntryPoint,
-		p.EOA1,
-		p.EOA2,
-		p.TPMVerifier,
-		p.TPMKeyID,
+		params.EntryPoint,
+		params.EOA1,
+		params.EOA2,
+		params.TPMVerifier,
+		params.TPMKeyID,
 	)
 	if err != nil {
 		return common.Address{}, common.Hash{}, fmt.Errorf("deploy QuantumAuthAccount: %w", err)
@@ -100,14 +83,9 @@ func DeployQuantumAuthAccount(
 	return addr, tx.Hash(), nil
 }
 
-func transactorFromWallet(
-	ctx context.Context,
-	client qa_evm.BlockchainClient,
-	w wtypes.Wallet,
-	chainID *big.Int,
-) (*bind.TransactOpts, error) {
+func transactorFromWallet(ctx context.Context, client evm.BlockchainClient, wallet wtypes.Wallet, chainID *big.Int) (*bind.TransactOpts, error) {
 
-	priv, err := w.ExportPrivateKey(ctx)
+	priv, err := wallet.ExportPrivateKey(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("export private key: %w", err)
 	}
@@ -117,14 +95,12 @@ func transactorFromWallet(
 		return nil, err
 	}
 
-	// Nonce
-	nonce, err := client.PendingNonceAt(ctx, w.Address())
+	nonce, err := client.PendingNonceAt(ctx, wallet.Address())
 	if err != nil {
 		return nil, err
 	}
 	opts.Nonce = new(big.Int).SetUint64(nonce)
 
-	// Fees: 1559 preferred, else legacy
 	tip, tipErr := client.SuggestGasTipCap(ctx)
 	hdr, hdrErr := client.HeaderByNumber(ctx, nil)
 

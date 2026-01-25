@@ -51,10 +51,9 @@ func (s *Server) withCORS(policy corsPolicy, next http.HandlerFunc) http.Handler
 
 func (s *Server) withAgentGuards(next http.HandlerFunc) http.HandlerFunc {
 	cors := corsPolicy{
-		allowedOrigins: s.uiAllowedOrigins,
-		allowMethods:   "GET,POST,OPTIONS",
-		allowHeaders:   "",
-		maxAge:         600,
+		allowMethods: "GET,POST,OPTIONS",
+		allowHeaders: "",
+		maxAge:       600,
 	}
 
 	return s.withCORS(cors, func(w http.ResponseWriter, r *http.Request) {
@@ -110,10 +109,9 @@ func (s *Server) withExtensionLocalGuards(next http.HandlerFunc) http.HandlerFun
 
 func (s *Server) withExtensionPairedGuards(next http.HandlerFunc) http.HandlerFunc {
 	extCors := corsPolicy{
-		allowedOrigins: nil,
-		allowMethods:   "GET,POST,OPTIONS",
-		allowHeaders:   "",
-		maxAge:         600,
+		allowMethods: "GET,POST,OPTIONS",
+		allowHeaders: "",
+		maxAge:       600,
 	}
 	return s.withCORS(extCors, func(w http.ResponseWriter, r *http.Request) {
 		if !isLoopbackRequest(r) {
@@ -125,8 +123,11 @@ func (s *Server) withExtensionPairedGuards(next http.HandlerFunc) http.HandlerFu
 			return
 		}
 
-		token, err := loadPairingToken(s.pairingTokenPath)
-		if err != nil {
+		token, ok := "", false
+		if s.pairTokenProvider != nil {
+			token, ok = s.pairTokenProvider.GetPairToken()
+		}
+		if !ok || token == "" {
 			http.Error(w, "extension not paired", http.StatusPreconditionRequired)
 			return
 		}

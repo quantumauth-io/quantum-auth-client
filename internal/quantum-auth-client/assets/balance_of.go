@@ -13,9 +13,6 @@ import (
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/contracts/bindings/go/qaerc20"
 )
 
-// BalanceOf returns the balance for `owner`.
-// - If token == NativeAddr (0x000..0): returns ETH balance (wei)
-// - Else: returns ERC20 balance (raw units)
 func (m *Manager) BalanceOf(ctx context.Context, network string, token common.Address, owner common.Address) (*big.Int, error) {
 	_ = normalizeNetworkKey(network) // keep for future multi-network backend routing
 
@@ -24,12 +21,10 @@ func (m *Manager) BalanceOf(ctx context.Context, network string, token common.Ad
 		return nil, fmt.Errorf("assets: eth client not initialized")
 	}
 
-	// ✅ ZERO ADDRESS → always zero, no RPC call
 	if owner == (common.Address{}) {
 		return big.NewInt(0), nil
 	}
 
-	// Native ETH sentinel
 	native := common.HexToAddress(constants.NativeAddr)
 	if strings.EqualFold(token.Hex(), native.Hex()) {
 		wei, err := client.BalanceAt(ctx, owner, nil)

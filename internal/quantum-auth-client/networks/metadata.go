@@ -30,7 +30,6 @@ func (m *Manager) ProbeRPC(ctx context.Context, rpcURL string) (shared.NetworkMe
 		return out, fmt.Errorf("unsupported rpcUrl scheme: %s", u.Scheme)
 	}
 
-	// small timeout so UI feels snappy
 	httpClient := &http.Client{Timeout: 7 * time.Second}
 
 	call := func(method string, params any) (json.RawMessage, error) {
@@ -63,7 +62,6 @@ func (m *Manager) ProbeRPC(ctx context.Context, rpcURL string) (shared.NetworkMe
 		return rr.Result, nil
 	}
 
-	// eth_chainId (hex quantity)
 	{
 		raw, err := call("eth_chainId", []any{})
 		if err != nil {
@@ -76,14 +74,12 @@ func (m *Manager) ProbeRPC(ctx context.Context, rpcURL string) (shared.NetworkMe
 		chainHex = strings.ToLower(helpers.NormalizeHex0x(strings.TrimSpace(chainHex)))
 		out.ChainIdHex = chainHex
 
-		// convert to int64
 		bi, ok := new(big.Int).SetString(strings.TrimPrefix(chainHex, "0x"), 16)
 		if ok {
 			out.ChainId = bi.Int64()
 		}
 	}
 
-	// net_version (decimal string) – optional
 	{
 		raw, err := call("net_version", []any{})
 		if err == nil {
@@ -96,7 +92,6 @@ func (m *Manager) ProbeRPC(ctx context.Context, rpcURL string) (shared.NetworkMe
 		}
 	}
 
-	// web3_clientVersion – optional
 	{
 		raw, err := call("web3_clientVersion", []any{})
 		if err == nil {
@@ -107,7 +102,6 @@ func (m *Manager) ProbeRPC(ctx context.Context, rpcURL string) (shared.NetworkMe
 		}
 	}
 
-	// latest block – optional (good sanity)
 	{
 		raw, err := call("eth_getBlockByNumber", []any{"latest", false})
 		if err == nil {

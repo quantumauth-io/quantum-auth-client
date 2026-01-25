@@ -16,7 +16,6 @@ func (m *Manager) FetchAsset(ctx context.Context, network string, addr string) (
 	contractAddress := common.HexToAddress(addr).Hex()
 	native := common.HexToAddress(constants.NativeAddr).Hex()
 
-	// Native token special-case
 	if strings.EqualFold(contractAddress, native) {
 		return Asset{
 			Address:  native,
@@ -63,7 +62,6 @@ func (m *Manager) FetchAsset(ctx context.Context, network string, addr string) (
 		name = n
 	}
 
-	// sanity check
 	if decimals > 255 {
 		return Asset{}, fmt.Errorf("decimals out of range: %d", decimals)
 	}

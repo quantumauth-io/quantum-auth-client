@@ -3,28 +3,23 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/constants"
+	"github.com/quantumauth-io/quantum-go-utils/cryptoctx"
+	"github.com/quantumauth-io/quantum-go-utils/log"
+	"github.com/quantumauth-io/quantum-go-utils/qa/headers"
+	"github.com/quantumauth-io/quantum-go-utils/qa/requests"
+
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/cloudflare/circl/sign"
-	"github.com/cloudflare/circl/sign/schemes"
-	"github.com/quantumauth-io/quantum-go-utils/log"
-	qareq "github.com/quantumauth-io/quantum-go-utils/qa/requests"
-	"github.com/quantumauth-io/quantum-go-utils/tpmdevice"
 )
-
-type SignedMessage struct {
-	ChallengeID string `json:"challenge_id"`
-	DeviceID    string `json:"device_id"`
-	Nonce       int64  `json:"nonce"`
-	Purpose     string `json:"purpose"`
-}
-
-// -------- HTTP DTOs --------
 
 type registerUserRequest struct {
 	UserName    string `json:"username"`
@@ -55,39 +50,18 @@ type registerDeviceRequest struct {
 
 type registerDeviceResponse struct {
 	DeviceID string `json:"device_id"`
+	UserID   string `json:"user_id"`
 }
 
 type authChallengeRequest struct {
 	DeviceID string `json:"device_id"`
+	AppID    string `json:"app_id"`
 }
 
 type authChallengeResponse struct {
 	ChallengeID string    `json:"challenge_id"`
 	Nonce       int64     `json:"nonce"`
 	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-type qaChallengeRequest struct {
-	Method      string `json:"method"      binding:"required"`
-	Path        string `json:"path"        binding:"required"`
-	BackendHost string `json:"backend_host" binding:"required"`
-}
-
-type qaChallengeResponse struct {
-	Headers map[string]string `json:"headers"`
-}
-
-type authVerifyRequest struct {
-	ChallengeID  string `json:"challenge_id"`
-	DeviceID     string `json:"device_id"`
-	PasswordB64  string `json:"password_b64"`
-	TPMSignature string `json:"tpm_signature"`
-	PQSignature  string `json:"pq_signature"`
-}
-
-type authVerifyResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	UserID        string `json:"user_id"`
 }
 
 type fullLoginRequest struct {
@@ -99,86 +73,67 @@ type fullLoginRequest struct {
 	PQSignature  string `json:"pq_signature"`
 }
 
-var pqScheme sign.Scheme
+type SignedHeaders map[headers.HeaderKey]string
 
-func init() {
-	pqScheme = schemes.ByName("ML-DSA-65")
-	if pqScheme == nil {
-		log.Fatal("PQ scheme ML-DSA-65 not found in CIRCL")
-	}
+type SignedFields struct {
+	AppID       string
+	Aud         string
+	TS          int64
+	ChallengeID string
+	UserID      string
+	DeviceID    string
+	Version     string
+	BodySHA256  string
 }
-
 type Client struct {
 	httpClient *http.Client
+	crypto     cryptoctx.Runtime
 	BaseURL    string
-
-	tpm tpmdevice.Client
-	pk  sign.PublicKey
-	sk  sign.PrivateKey
-
-	tpmPubB64 string
-	pqPubB64  string
-
-	userID   string
-	deviceID string
-
-	ctx context.Context
 }
 
-func (c *Client) SetAuthContext(userID, deviceID string) {
-	c.userID = userID
-	c.deviceID = deviceID
+type ClientConfig struct {
+	BaseURL     string
+	HTTPTimeout time.Duration
+	Crypto      cryptoctx.Runtime
 }
 
-// NewClient initialises TPM + PQ keys and an HTTP client.
-func NewClient(baseURL string, tpmClient tpmdevice.Client) (*Client, error) {
-	if tpmClient == nil {
-		return nil, fmt.Errorf("tpm client is nil")
+func NewClient(cfg ClientConfig) (*Client, error) {
+	if cfg.BaseURL == "" {
+		return nil, fmt.Errorf("baseURL is empty")
+	}
+	if cfg.Crypto == nil {
+		return nil, fmt.Errorf("cryptoctx runtime is nil")
+	}
+	if cfg.Crypto.TPMPublicKeyB64() == "" {
+		return nil, fmt.Errorf("cryptoctx TPM public key unavailable")
 	}
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-
-	tpmPub := tpmClient.PublicKeyB64()
-
-	pk, sk, err := pqScheme.GenerateKey()
-	if err != nil {
-		_ = tpmClient.Close()
-		return nil, fmt.Errorf("PQ keygen failed: %w", err)
+	timeout := cfg.HTTPTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
 	}
-	pqPubBytes, err := pk.MarshalBinary()
-	if err != nil {
-		_ = tpmClient.Close()
-		return nil, fmt.Errorf("PQ pub marshal failed: %w", err)
-	}
-	pqPub := base64.RawStdEncoding.EncodeToString(pqPubBytes)
-
 	return &Client{
-		httpClient: httpClient,
-		tpm:        tpmClient,
-		BaseURL:    baseURL,
-		pk:         pk,
-		sk:         sk,
-		tpmPubB64:  tpmPub,
-		pqPubB64:   pqPub,
+		httpClient: &http.Client{Timeout: timeout},
+		BaseURL:    cfg.BaseURL,
+		crypto:     cfg.Crypto,
 	}, nil
 }
 
 func (c *Client) Close() error {
-	return c.tpm.Close()
+	if c == nil || c.crypto == nil {
+		return nil
+	}
+	return c.crypto.Close()
 }
 
-// Expose public keys for device registration.
-func (c *Client) TPMPublicKey() string { return c.tpmPubB64 }
-func (c *Client) PQPublicKey() string  { return c.pqPubB64 }
-
-// ===== high-level flow methods =====
-
-// RegisterUser wraps POST /users/register on the quantum-auth server.
 func (c *Client) RegisterUser(ctx context.Context, email string, password []byte, username string) (string, error) {
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := registerUserRequest{Email: email, PasswordB64: pwB64, UserName: username}
 
-	b, _ := json.Marshal(reqBody)
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("registerUser: marshal: %w", err)
+	}
 
 	url := c.BaseURL + "/users/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
@@ -198,7 +153,7 @@ func (c *Client) RegisterUser(ctx context.Context, email string, password []byte
 	if resp.StatusCode == http.StatusCreated {
 		var out registerUserResponse
 		if err = json.Unmarshal(bodyBytes, &out); err != nil {
-			return "", fmt.Errorf("decode registerUser response: %w", err)
+			return "", fmt.Errorf("registerUser: decode response: %w", err)
 		}
 		return out.UserID, nil
 	}
@@ -206,18 +161,20 @@ func (c *Client) RegisterUser(ctx context.Context, email string, password []byte
 	return "", fmt.Errorf("registerUser: status %d: %s", resp.StatusCode, string(bodyBytes))
 }
 
-// GetUserByEmailAndPassword wraps POST /users/me on the quantum-auth server.
 func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, password []byte) (string, error) {
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := getUserRequest{Email: email, PasswordB64: pwB64}
-	body, _ := json.Marshal(reqBody)
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("getUser: marshal: %w", err)
+	}
 
 	url := c.BaseURL + "/users/me"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return "", err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -231,56 +188,76 @@ func (c *Client) GetUserByEmailAndPassword(ctx context.Context, email string, pa
 	if resp.StatusCode == http.StatusOK {
 		var out getUserResponse
 		if err = json.Unmarshal(bodyBytes, &out); err != nil {
-			return "", fmt.Errorf("decode ME response: %w", err)
+			return "", fmt.Errorf("getUser: decode response: %w", err)
 		}
 		return out.UserID, nil
 	}
 
-	return "", fmt.Errorf("registerUser: status %d: %s", resp.StatusCode, string(bodyBytes))
+	return "", fmt.Errorf("getUser: status %d: %s", resp.StatusCode, string(bodyBytes))
 }
 
-// RegisterDevice wraps POST /devices/register.
-func (c *Client) RegisterDevice(ctx context.Context, userEmail string, password []byte, label string) (string, error) {
+func (c *Client) RegisterDevice(ctx context.Context, userEmail string, password []byte, label string) (string, string, error) {
+
+	tpmPubB64 := c.crypto.TPMPublicKeyB64()
+	if tpmPubB64 == "" {
+		return "", "", fmt.Errorf("registerDevice: TPM public key unavailable")
+	}
+	pqPubB64, err := c.crypto.PQPublicKeyB64(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("registerDevice: PQ public key: %w", err)
+	}
 
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
 	reqBody := registerDeviceRequest{
 		UserEmail:    userEmail,
 		PasswordB64:  pwB64,
 		DeviceLabel:  label,
-		TPMPublicKey: c.tpmPubB64,
-		PQPublicKey:  c.pqPubB64,
+		TPMPublicKey: tpmPubB64,
+		PQPublicKey:  pqPubB64,
 	}
-	b, _ := json.Marshal(reqBody)
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", "", fmt.Errorf("registerDevice: marshal: %w", err)
+	}
 
 	url := c.BaseURL + "/devices/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("registerDevice: status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", "", fmt.Errorf("registerDevice: status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var out registerDeviceResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+		return "", "", fmt.Errorf("registerDevice: decode response: %w", err)
 	}
-	return out.DeviceID, nil
+
+	if strings.TrimSpace(out.UserID) == "" || strings.TrimSpace(out.DeviceID) == "" {
+		return "", "", fmt.Errorf("registerDevice: response missing user_id or device_id")
+	}
+
+	return out.DeviceID, out.UserID, nil
 }
 
-// RequestChallenge wraps POST /auth/challenge.
-func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string, error) {
-	reqBody := authChallengeRequest{DeviceID: deviceID}
-	b, _ := json.Marshal(reqBody)
+func (c *Client) RequestChallenge(ctx context.Context, deviceID, appID string) (string, error) {
+	reqBody := authChallengeRequest{DeviceID: deviceID, AppID: appID}
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("requestChallenge: marshal: %w", err)
+	}
 
 	url := c.BaseURL + "/auth/challenge"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
@@ -302,153 +279,105 @@ func (c *Client) RequestChallenge(ctx context.Context, deviceID string) (string,
 
 	var out authChallengeResponse
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+		return "", fmt.Errorf("requestChallenge: decode response: %w", err)
 	}
 	return out.ChallengeID, nil
 }
 
-// BuildSignedMessage creates the JSON message used for challenge signatures.
-func (c *Client) BuildSignedMessage(chID, devID string, nonce int64) ([]byte, error) {
-	msg := SignedMessage{
-		ChallengeID: chID,
-		DeviceID:    devID,
-		Nonce:       nonce,
-		Purpose:     "auth",
-	}
-	return json.Marshal(msg)
-}
+func (c *Client) SignRequestAndReturnHeaders(ctx context.Context, method string, path string, appID string, host string, userID string,
+	deviceID string, challengeID string, body []byte) (map[string]string, error) {
 
-// CompleteChallenge builds + signs message and calls /auth/verify.
-func (c *Client) CompleteChallenge(
-	ctx context.Context,
-	chID, devID string,
-	nonce int64,
-	password []byte,
-) (bool, string, error) {
-
-	// message
-	msgBytes, err := c.BuildSignedMessage(chID, devID, nonce)
-	if err != nil {
-		return false, "", fmt.Errorf("buildSignedMessage: %w", err)
-	}
-
-	// PQ sign
-	pqSigBytes := pqScheme.Sign(c.sk, msgBytes, nil)
-	if pqSigBytes == nil {
-		return false, "", fmt.Errorf("PQ sign failed")
-	}
-	pqSigB64 := base64.RawStdEncoding.EncodeToString(pqSigBytes)
-
-	// TPM sign
-	tpmSigB64, err := c.tpm.SignB64(msgBytes)
-	if err != nil {
-		return false, "", fmt.Errorf("TPM sign failed: %w", err)
-	}
-
-	return c.verifyAuth(ctx, chID, devID, password, tpmSigB64, pqSigB64)
-}
-
-// verifyAuth POSTs /auth/verify.
-func (c *Client) verifyAuth(
-	ctx context.Context,
-	chID, devID string, password []byte, tpmSig, pqSig string,
-) (bool, string, error) {
-
-	pwB64 := base64.RawStdEncoding.EncodeToString(password)
-
-	reqBody := authVerifyRequest{
-		ChallengeID:  chID,
-		DeviceID:     devID,
-		PasswordB64:  pwB64,
-		TPMSignature: tpmSig,
-		PQSignature:  pqSig,
-	}
-	b, _ := json.Marshal(reqBody)
-
-	url := c.BaseURL + "/auth/verify"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
-	if err != nil {
-		return false, "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == http.StatusOK {
-		var out authVerifyResponse
-		if err := json.Unmarshal(bodyBytes, &out); err != nil {
-			return false, "", err
-		}
-		return out.Authenticated, out.UserID, nil
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		var out authVerifyResponse
-		_ = json.Unmarshal(bodyBytes, &out)
-		return out.Authenticated, out.UserID, nil
-	}
-
-	return false, "", fmt.Errorf("verifyAuth: status %d: %s", resp.StatusCode, string(bodyBytes))
-}
-
-// SignRequest builds QuantumAuth headers for an arbitrary request.
-func (c *Client) SignRequest(
-	method string, path string, host string, userID, deviceID, challengeId string,
-	body []byte,
-) (map[string]string, error) {
+	sum := sha256.Sum256(body)
+	bodyHex := hex.EncodeToString(sum[:])
 
 	ts := time.Now().Unix()
 
-	canonical := qareq.CanonicalString(qareq.CanonicalInput{
-		Method:      method,
-		Path:        path,
-		Host:        host,
-		TS:          ts,
-		ChallengeID: challengeId,
-		UserID:      userID,
-		DeviceID:    deviceID,
-		Body:        body,
+	normalizedMethod, err := requests.NormalizeAndValidateMethod(method)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedPath, err := requests.NormalizeAndValidatePath(path, requests.PathNormalizeOptions{
+		CollapseSlashes: false,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedAud := requests.NormalizeBackendHost(host)
+	if normalizedAud == "" {
+		return nil, fmt.Errorf("missing/invalid backend host")
+	}
+
+	validatedAppID, err := requests.ValidateUUIDv4(appID)
+	if err != nil {
+		return nil, fmt.Errorf("missing/invalid app id: %s", appID)
+	}
+
+	validatedChallengeID, err := requests.ValidateUUIDv4(challengeID)
+	if err != nil {
+		return nil, fmt.Errorf("missing/invalid challenge id: %s", challengeID)
+	}
+
+	validatedUserID, err := requests.ValidateUUIDv4(userID)
+	if err != nil {
+		return nil, fmt.Errorf("missing/invalid user id: %s", userID)
+	}
+
+	validatedDeviceID, err := requests.ValidateUUIDv4(deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("missing/invalid device id: %s", deviceID)
+	}
+
+	canonical, err := requests.CanonicalString(requests.CanonicalInput{
+		Method:        normalizedMethod,
+		Path:          normalizedPath,
+		AppID:         validatedAppID,
+		BackendHost:   normalizedAud,
+		TS:            ts,
+		ChallengeID:   validatedChallengeID,
+		UserID:        validatedUserID,
+		DeviceID:      validatedDeviceID,
+		BodySHA256Hex: bodyHex,
+	})
+
+	sum2 := sha256.Sum256([]byte(canonical))
+	log.Debug("qa sign canonical",
+		"canonicalSha256", hex.EncodeToString(sum2[:]),
+		"method", normalizedMethod,
+		"path", normalizedPath,
+		"aud", normalizedAud,
+		"ts", ts,
+		"challengeId", validatedChallengeID,
+	)
 
 	msg := []byte(canonical)
 
-	// TPM sign
-	tpmSig, err := c.tpm.SignB64(msg)
+	tpmSig, err := c.crypto.SignTPMB64(ctx, msg)
 	if err != nil {
 		return nil, fmt.Errorf("tpm sign: %w", err)
 	}
 
-	// PQ sign
-	sigBytes := pqScheme.Sign(c.sk, msg, nil)
-	if sigBytes == nil {
-		return nil, fmt.Errorf("pq sign failed")
-	}
-	pqSig := base64.RawStdEncoding.EncodeToString(sigBytes)
-
-	// base64 canonical so it is safe as a single-line header
-	canonicalB64 := base64.StdEncoding.EncodeToString(msg)
-
-	headers := map[string]string{
-		"Authorization": fmt.Sprintf(
-			`QuantumAuth sig_tpm="%s", sig_pq="%s"`,
-			tpmSig, pqSig,
-		),
-		"X-QuantumAuth-Canonical-B64": canonicalB64,
+	pqSig, err := c.crypto.SignPQB64(ctx, msg)
+	if err != nil {
+		return nil, fmt.Errorf("pq sign: %w", err)
 	}
 
-	return headers, nil
+	qaHeaders := BuildSignedHeaders(SignedFields{
+		AppID:       validatedAppID,
+		Aud:         normalizedAud,
+		TS:          ts,
+		ChallengeID: validatedChallengeID,
+		UserID:      validatedUserID,
+		DeviceID:    validatedDeviceID,
+		Version:     constants.QAHeaderSigVersion,
+		BodySHA256:  bodyHex,
+	}, tpmSig, pqSig)
+
+	return qaHeaders.ToStringMap(), nil
 }
 
-// FullLogin performs a one-shot full authentication against the QA server.
-// It proves: password + TPM key + PQ key for the given user/device.
 func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, password []byte) error {
-	// message bound to this user/device & purpose
 	msg := struct {
 		UserID   string `json:"user_id"`
 		DeviceID string `json:"device_id"`
@@ -466,17 +395,14 @@ func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, 
 		return fmt.Errorf("fullLogin: marshal message: %w", err)
 	}
 
-	// PQ sign
-	pqSigBytes := pqScheme.Sign(c.sk, msgBytes, nil)
-	if pqSigBytes == nil {
-		return fmt.Errorf("fullLogin: PQ sign failed")
-	}
-	pqSigB64 := base64.RawStdEncoding.EncodeToString(pqSigBytes)
-
-	// TPM sign
-	tpmSigB64, err := c.tpm.SignB64(msgBytes)
+	pqSigB64, err := c.crypto.SignPQB64(ctx, msgBytes)
 	if err != nil {
-		return fmt.Errorf("fullLogin: TPM sign failed: %w", err)
+		return fmt.Errorf("fullLogin: PQ sign: %w", err)
+	}
+
+	tpmSigB64, err := c.crypto.SignTPMB64(ctx, msgBytes)
+	if err != nil {
+		return fmt.Errorf("fullLogin: TPM sign: %w", err)
 	}
 
 	pwB64 := base64.RawStdEncoding.EncodeToString(password)
@@ -489,11 +415,13 @@ func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, 
 		TPMSignature: tpmSigB64,
 		PQSignature:  pqSigB64,
 	}
-	b, _ := json.Marshal(reqBody)
 
-	// adjust path if you want a different route name
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("fullLogin: marshal request: %w", err)
+	}
+
 	url := c.BaseURL + "/auth/full-login"
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("fullLogin: build request: %w", err)
@@ -507,7 +435,6 @@ func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, 
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("fullLogin: status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
@@ -515,40 +442,34 @@ func (c *Client) FullLogin(ctx context.Context, userID string, deviceID string, 
 	return nil
 }
 
-// ExportPQKeys returns the PQ public key (already in base64 in the client)
-// and the PQ private key in base64, suitable for storing in the creds file.
-func (c *Client) ExportPQKeys() (pubB64, privB64 string, err error) {
-	skBytes, err := c.sk.MarshalBinary()
-	if err != nil {
-		return "", "", fmt.Errorf("PQ private key marshal failed: %w", err)
+func BuildSignedHeaders(fields SignedFields, tpmSig, pqSig string) SignedHeaders {
+	h := SignedHeaders{
+		// Signatures go in Authorization
+		headers.HeaderAuthorization: fmt.Sprintf(
+			`%s sig_tpm="%s", sig_pq="%s"`,
+			headers.HeaderQuantumAuth,
+			tpmSig,
+			pqSig,
+		),
+
+		// Required fields for canonical reconstruction
+		headers.HeaderQAAppID:       fields.AppID,
+		headers.HeaderQAAudience:    fields.Aud,
+		headers.HeaderQATimestamp:   fmt.Sprintf("%d", fields.TS),
+		headers.HeaderQAChallengeID: fields.ChallengeID,
+		headers.HeaderQAUserID:      fields.UserID,
+		headers.HeaderQADeviceID:    fields.DeviceID,
+		headers.HeaderQAVersion:     fields.Version,
+		headers.HeaderQABodySHA256:  fields.BodySHA256,
 	}
-	privB64 = base64.RawStdEncoding.EncodeToString(skBytes)
-	return c.pqPubB64, privB64, nil
+
+	return h
 }
 
-// LoadPQKeys replaces the current PQ keypair in the client with the given pair.
-func (c *Client) LoadPQKeys(pubB64, privB64 string) error {
-	pubBytes, err := base64.RawStdEncoding.DecodeString(pubB64)
-	if err != nil {
-		return fmt.Errorf("decode PQ pub key: %w", err)
+func (h SignedHeaders) ToStringMap() map[string]string {
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		out[string(k)] = v
 	}
-	privBytes, err := base64.RawStdEncoding.DecodeString(privB64)
-	if err != nil {
-		return fmt.Errorf("decode PQ priv key: %w", err)
-	}
-
-	pk, err := pqScheme.UnmarshalBinaryPublicKey(pubBytes)
-	if err != nil {
-		return fmt.Errorf("unmarshal PQ pub key: %w", err)
-	}
-	sk, err := pqScheme.UnmarshalBinaryPrivateKey(privBytes)
-	if err != nil {
-		return fmt.Errorf("unmarshal PQ priv key: %w", err)
-	}
-
-	c.pk = pk
-	c.sk = sk
-	c.pqPubB64 = pubB64
-
-	return nil
+	return out
 }

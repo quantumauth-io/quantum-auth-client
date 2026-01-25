@@ -1,0 +1,90 @@
+name: publish-snap
+
+on:
+  workflow_run:
+    workflows: ["release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to Snap (e.g. v0.1.6)"
+        required: true
+      channel:
+        description: "Snap channel (edge, beta, candidate, stable)"
+        required: false
+        default: "edge"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release metadata artifact
+        if: github.event_name == 'workflow_run'
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: release-meta
+          path: .
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ] && [ -f release-tag.txt ]; then
+            TAG="$(cat release-tag.txt)"
+          fi
+          test -n "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using tag: $TAG"
+
+      - name: Checkout tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Install snapcraft
+        run: |
+          sudo snap install snapcraft --classic
+
+      # Required for remote-build (Launchpad SSH upload)
+      - name: Set up Launchpad SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
+
+      - name: Add Launchpad hosts to known_hosts
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H bazaar.launchpad.net >> ~/.ssh/known_hosts
+          ssh-keyscan -H git.launchpad.net   >> ~/.ssh/known_hosts
+          ssh-keyscan -H upload.launchpad.net >> ~/.ssh/known_hosts
+
+      # Build both amd64 + arm64 on Launchpad build farm
+      - name: Remote build (amd64 + arm64)
+        env:
+          # store creds are for store operations; remote-build itself uses Launchpad SSH
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          snapcraft remote-build --build-on amd64,arm64
+
+      - name: Upload to Snap Store (prerelease channel)
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          CH="${CHANNEL:-edge}"
+          ls -lah *.snap
+          snapcraft upload *.snap --release "$CH"

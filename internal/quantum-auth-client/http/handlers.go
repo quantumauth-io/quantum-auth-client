@@ -1,10 +1,10 @@
 package http
 
 import (
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
+	"encoding/base64"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,17 +14,18 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind/v2"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/constants"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/contracts/bindings/go/entrypoint"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/contracts/bindings/go/quantumauthaccount"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/devkeys"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/txsender"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/walletsigner"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/shared"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/utils"
-
 	"github.com/quantumauth-io/quantum-go-utils/log"
+	"github.com/quantumauth-io/quantum-go-utils/qa/requests"
 )
+
+// WEB2 Handlers
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{JSONKeyOK: true})
@@ -73,28 +74,6 @@ func (s *Server) handleAgentExtensionPair(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *Server) handleAgentStatus(w http.ResponseWriter, r *http.Request) {
-	out := agentStatusResponse{OK: true}
-	if s.authClient != nil && s.authClient.State != nil {
-		out.LoggedIn = true
-		out.UserID = s.authClient.State.UserID
-		out.DeviceID = s.authClient.State.DeviceID
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleAgentSignRegister(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, signResp{Signature: AgentSignaturePlaceholderHex})
-}
-
-func (s *Server) handleAgentSignWithdraw(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, signResp{Signature: AgentSignaturePlaceholderHex})
-}
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
 func (s *Server) handleExtensionAuth(w http.ResponseWriter, r *http.Request) {
 	var extReq extensionRequest
 	if !decodeJSONBody(w, r, &extReq) {
@@ -111,7 +90,7 @@ func (s *Server) handleExtensionAuth(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case ExtensionActionRequestChallenge:
-		s.handleRequestChallenge(w, r.Context(), extReq)
+		s.handleRequestChallenge(w, r, extReq)
 
 	default:
 		writeJSON(w, http.StatusBadRequest, extensionResponse{
@@ -121,7 +100,7 @@ func (s *Server) handleExtensionAuth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleRequestChallenge(w http.ResponseWriter, ctx context.Context, extReq extensionRequest) {
+func (s *Server) handleRequestChallenge(w http.ResponseWriter, r *http.Request, extReq extensionRequest) {
 	if !requireAuthState(w, s) {
 		return
 	}
@@ -135,39 +114,72 @@ func (s *Server) handleRequestChallenge(w http.ResponseWriter, ctx context.Conte
 		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
-
-	origin := normalizeOrigin(req.Origin)
-	if origin == "" {
-		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid origin"})
+	
+	validatedAppId, err := requests.ValidateUUIDv4(req.AppID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid appID"})
 		return
 	}
 
-	if s.perms == nil || !s.perms.IsAllowed(origin) {
+	if s.perms == nil || !s.perms.IsAllowed(validatedAppId) {
 		writeJSON(w, http.StatusOK, extensionResponse{
 			OK:    false,
 			Error: ExtensionApprovalRequiredError,
 			Data: map[string]any{
-				JSONKeyOrigin:  origin,
+				JSONKeyOrigin:  validatedAppId,
 				JSONKeyAllowed: false,
 			},
 		})
 		return
 	}
 
-	chID, err := s.qaClient.RequestChallenge(ctx, s.authClient.State.DeviceID)
+	chID, err := s.qaClient.RequestChallenge(s.ctx, s.identity.DeviceID, validatedAppId)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
 
-	signedHeaders, err := s.qaClient.SignRequest(
-		req.Method,
-		req.Path,
-		req.BackendHost,
-		s.authClient.State.UserID,
-		s.authClient.State.DeviceID,
-		chID,
-		nil,
+	normalizedMethod, err := requests.NormalizeAndValidateMethod(req.Method)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	normalizedHost := requests.NormalizeBackendHost(req.BackendHost)
+
+	normalizedPath, err := requests.NormalizeAndValidatePath(req.Path, requests.PathNormalizeOptions{
+		CollapseSlashes: false,
+	})
+
+	validatedChallangeId, err := requests.ValidateUUIDv4(chID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	var body []byte
+	if strings.TrimSpace(req.BodyB64) != "" {
+		var err error
+		body, err = base64.RawStdEncoding.DecodeString(req.BodyB64)
+		if err != nil {
+			body, err = base64.StdEncoding.DecodeString(req.BodyB64)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "invalid bodyB64"})
+			return
+		}
+	}
+
+	signedHeaders, err := s.qaClient.SignRequestAndReturnHeaders(
+		s.ctx,
+		normalizedMethod,
+		normalizedPath,
+		validatedAppId,
+		normalizedHost,
+		s.identity.UserID,
+		s.identity.DeviceID,
+		validatedChallangeId,
+		body,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
@@ -177,9 +189,7 @@ func (s *Server) handleRequestChallenge(w http.ResponseWriter, ctx context.Conte
 	writeJSON(w, http.StatusOK, extensionResponse{
 		OK: true,
 		Data: map[string]any{
-			"qaProof":      signedHeaders,
-			JSONKeyOrigin:  origin,
-			JSONKeyAllowed: true,
+			"qaProof": signedHeaders,
 		},
 	})
 }
@@ -194,17 +204,18 @@ func (s *Server) handleGetPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetPermissionStatus(w http.ResponseWriter, r *http.Request) {
-	origin := normalizeOrigin(r.URL.Query().Get(JSONKeyOrigin))
-	if origin == "" {
-		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid origin"})
+	raw := strings.TrimSpace(r.URL.Query().Get(JSONKeyAppId))
+	appID, err := requests.ValidateUUIDv4(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid app id"})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, extensionResponse{
 		OK: true,
 		Data: map[string]any{
-			JSONKeyOrigin:  origin,
-			JSONKeyAllowed: s.perms.IsAllowed(origin),
+			JSONKeyAppId:   appID,
+			JSONKeyAllowed: s.perms.IsAllowed(appID),
 		},
 	})
 }
@@ -215,13 +226,16 @@ func (s *Server) handleSetPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	origin := normalizeOrigin(req.Origin)
-	if origin == "" {
-		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid origin"})
+	appID, err := requests.ValidateUUIDv4(req.AppId)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid appID"})
+	}
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, extensionResponse{OK: false, Error: "missing/invalid appID"})
 		return
 	}
 
-	if err := s.perms.Set(origin, req.Allowed); err != nil {
+	if err := s.perms.Set(appID, req.Allowed); err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
@@ -229,7 +243,7 @@ func (s *Server) handleSetPermission(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, extensionResponse{
 		OK: true,
 		Data: map[string]any{
-			JSONKeyOrigin:  origin,
+			JSONKeyAppId:   appID,
 			JSONKeyAllowed: req.Allowed,
 		},
 	})
@@ -283,12 +297,274 @@ func (s *Server) handleTokenPair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleWalletChainId(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
+// Dev Keys Provider
+
+func (s *Server) handleDevKeyList(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireDevKeys(w, r)
+	if !ok {
 		return
 	}
 
-	activeChainClient, err := s.activeHTTP(r.Context())
+	keys, err := snap.Manager.List(r.Context())
+	if err != nil {
+		writeJSON(w, devKeyHTTPStatus(err), map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "failed to list developer keys",
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"keys": keys,
+		},
+	})
+}
+
+func (s *Server) handleDevKeyCreate(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireDevKeys(w, r)
+	if !ok {
+		return
+	}
+
+	var req devKeyCreateReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	appID := strings.TrimSpace(req.AppID)
+	appName := strings.TrimSpace(req.AppName)
+
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "appId is required",
+		})
+		return
+	}
+	if appName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "appName is required",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	k, err := snap.Manager.Create(ctx, appID, appName)
+	if err != nil {
+		status := devKeyHTTPStatus(err)
+
+		// friendlier message for expected conflicts
+		msg := "failed to create developer key"
+		if errors.Is(err, devkeys.ErrConflict) {
+			msg = "developer key already exists for this appId"
+		} else if errors.Is(err, devkeys.ErrInvalidInput) {
+			msg = "invalid input"
+		}
+
+		writeJSON(w, status, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: msg,
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"key": k,
+		},
+	})
+}
+
+func (s *Server) handleDevKeyUpdate(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireDevKeys(w, r)
+	if !ok {
+		return
+	}
+
+	var req devKeyUpdateReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "appId is required",
+		})
+		return
+	}
+
+	// normalize patch
+	var patch devkeys.Patch
+
+	if req.Patch.AppName != nil {
+		v := strings.TrimSpace(*req.Patch.AppName)
+		patch.AppName = &v
+		if v == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				JSONKeyOK:    false,
+				JSONKeyError: "appName cannot be empty",
+			})
+			return
+		}
+	}
+
+	if patch.AppName == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "patch is empty (appName is required)",
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	if err := snap.Manager.Update(ctx, appID, patch); err != nil {
+		status := devKeyHTTPStatus(err)
+
+		msg := "failed to update developer key"
+		if errors.Is(err, devkeys.ErrNotFound) {
+			msg = "developer key not found"
+		} else if errors.Is(err, devkeys.ErrInvalidInput) {
+			msg = "invalid input"
+		}
+
+		writeJSON(w, status, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: msg,
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+	})
+}
+
+func (s *Server) handleDevKeyDelete(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireDevKeys(w, r)
+	if !ok {
+		return
+	}
+
+	var req devKeyDeleteReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "appId is required",
+		})
+		return
+	}
+
+	if err := snap.Manager.Delete(r.Context(), appID); err != nil {
+		status := devKeyHTTPStatus(err)
+
+		msg := "failed to delete developer key"
+		if errors.Is(err, devkeys.ErrNotFound) {
+			msg = "developer key not found"
+		} else if errors.Is(err, devkeys.ErrInvalidInput) {
+			msg = "invalid input"
+		}
+
+		writeJSON(w, status, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: msg,
+			"details":    err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+	})
+}
+
+func (s *Server) handleDeveloperKeyExport(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireDevKeys(w, r)
+	if !ok {
+		return
+	}
+
+	var req developerKeyExportReq
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "appId is required",
+		})
+		return
+	}
+
+	if !req.Confirm {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			JSONKeyOK:    false,
+			JSONKeyError: "confirm is required to export the private key",
+		})
+		return
+	}
+
+	privB64, err := snap.Manager.ExportPrivateKey(r.Context(), appID)
+	if err != nil {
+		switch {
+		case errors.Is(err, devkeys.ErrInvalidInput):
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				JSONKeyOK:    false,
+				JSONKeyError: "invalid appId",
+			})
+			return
+
+		case errors.Is(err, devkeys.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				JSONKeyOK:    false,
+				JSONKeyError: "key not found",
+			})
+			return
+
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				JSONKeyOK:    false,
+				JSONKeyError: "failed to export private key",
+				"details":    err.Error(),
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		JSONKeyOK: true,
+		JSONKeyData: map[string]any{
+			"privateKeyB64": privB64,
+		},
+	})
+}
+
+// WEB3 Provider
+
+func (s *Server) handleWalletChainId(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
+	activeChainClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
@@ -311,11 +587,13 @@ func (s *Server) handleWalletChainId(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTransactionReceipt(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
+
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
-	activeChainClient, err := s.activeHTTP(r.Context())
+	activeChainClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
@@ -393,26 +671,24 @@ func (s *Server) handleTransactionReceipt(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleWalletAccounts(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
-		return
-	}
-	if !requireWalletRuntime(w, s) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
 	accounts := make([]string, 0, 3)
 
 	// EOAs always exist
-	accounts = append(accounts, s.onChain.User.Address().Hex())
-	accounts = append(accounts, s.onChain.Device.Address().Hex())
+	accounts = append(accounts, snap.OnChain.User.Address().Hex())
+	accounts = append(accounts, snap.OnChain.Device.Address().Hex())
 
 	// AA account: always return *something* (zero address when not deployed)
 	contractAddr := common.Address{}
 
-	if s.onChain.Contract != nil {
-		if ca, err := s.onChain.ContractAddress(); err == nil && ca != (common.Address{}) {
+	if snap.OnChain.Contract != nil {
+		if ca, err := snap.OnChain.ContractAddress(); err == nil && ca != (common.Address{}) {
 			contractAddr = ca
-		} else if addr := strings.TrimSpace(s.onChain.Contract.Address); addr != "" {
+		} else if addr := strings.TrimSpace(snap.OnChain.Contract.Address); addr != "" {
 			contractAddr = common.HexToAddress(addr)
 		}
 	}
@@ -427,11 +703,12 @@ func (s *Server) handleWalletAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWalletSwitchChain(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
-	activeChainClient, err := s.activeHTTP(r.Context())
+	activeChainClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
@@ -464,28 +741,28 @@ func (s *Server) handleWalletSwitchChain(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	network, err := s.chainService.ResolveNetworkByChainIDHex(want)
+	network, err := snap.Chains.ResolveNetworkByChainIDHex(want)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{JSONKeyNotAdded: true})
 		return
 	}
 
-	if err := s.chainService.SwitchChain(s.ctx, network.NetworkName); err != nil {
+	if err := snap.Chains.SwitchChain(s.ctx, network.NetworkName); err != nil {
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletSwitchNetworkFailedText, err.Error())
 		return
 	}
 
-	if s.onChain != nil {
-		_ = s.onChain.ValidateChain(r.Context())
-		if err := s.onChain.LoadContractForCurrentChain(r.Context(), s.cwStore); err != nil {
+	if snap.Chains != nil {
+		_ = snap.OnChain.ValidateChain(r.Context())
+		if err := snap.OnChain.LoadContractForCurrentChain(r.Context(), snap.CWStore); err != nil {
 			log.Error("failed to load contract wallet store after switch", "err", err)
 		}
 	}
 
-	if s.assetsManager != nil {
+	if snap.Assets != nil {
 		defaultAssets := s.cfg.DefaultAssets.Network[network.NetworkName]
 
-		if err := s.assetsManager.EnsureStoreForNetwork(r.Context(), network.NetworkName, defaultAssets); err != nil {
+		if err := snap.Assets.EnsureStoreForNetwork(r.Context(), network.NetworkName, defaultAssets); err != nil {
 			log.Error("failed to ensure store for network", "network", network.NetworkName, "err", err)
 			writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletFailedToLoadAssetsText, err.Error())
 			return
@@ -496,287 +773,61 @@ func (s *Server) handleWalletSwitchChain(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleWalletSendTransaction(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
 	var req SendTxRequest
 	if !decodeJSONBodyRPC(w, r, &req) {
 		return
 	}
 
-	if strings.TrimSpace(req.Tx.From) == "" {
-		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "missing tx.from", nil)
-		return
-	}
-
-	from := common.HexToAddress(req.Tx.From)
-
-	// AA path
-	if s.isAAAccount(from) {
-		s.handleSendViaAA(w, r, req)
-		return
-	}
-
-	// EOA path
-	s.handleSendViaEOA(w, r, req, from)
-}
-
-func (s *Server) handleSendViaAA(w http.ResponseWriter, r *http.Request, req SendTxRequest) {
-	activeChainClient, err := s.activeHTTP(r.Context())
+	txReq, err := toTxRequest(req)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
+		writeRPCError(
+			w,
+			http.StatusBadRequest,
+			JSONRPCErrorCodeInvalidParams,
+			"invalid transaction",
+			err.Error(),
+		)
 		return
 	}
-	chainId, err := activeChainClient.ChainID(s.ctx)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-	network, err := s.chainService.ResolveNetworkByChainID(chainId.Uint64())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-
-	if strings.TrimSpace(network.EntryPoint) == "" {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletEntryPointNotConfiguredText, nil)
-		return
-	}
-
-	entryPointAddr := common.HexToAddress(network.EntryPoint)
-	entryPoint, err := entrypoint.NewEntryPoint(entryPointAddr, activeChainClient)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletBindEntryPointFailedText, err.Error())
-		return
-	}
-
-	sender := common.HexToAddress(req.Tx.From)
-	to := common.HexToAddress(req.Tx.To)
-
-	value := new(big.Int)
-	if req.Tx.Value != "" && req.Tx.Value != HexPrefix0x {
-		value.SetString(strings.TrimPrefix(req.Tx.Value, HexPrefix0x), 16)
-	}
-	data := common.FromHex(req.Tx.Data)
-
-	accABI, err := quantumauthaccount.QuantumAuthAccountMetaData.GetAbi()
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "account abi failed", err.Error())
-		return
-	}
-
-	callData, err := accABI.Pack("execute", to, value, data)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletPackExecuteFailedText, err.Error())
-		return
-	}
-
-	nonce, err := entryPoint.GetNonce(&bind.CallOpts{Context: r.Context()}, sender, big.NewInt(UserOpDefaultNonceKeyInt64))
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletGetNonceFailedText, err.Error())
-		return
-	}
-
-	callGas := new(big.Int).SetUint64(UserOpDefaultCallGasLimitUint64)
-	verificationGas := new(big.Int).SetUint64(UserOpDefaultVerificationGasLimitUint64)
-	maxPriorityFee := big.NewInt(EIP1559DefaultMaxPriorityFeeWeiInt64)
-	maxFee := big.NewInt(EIP1559DefaultMaxFeeWeiInt64)
-	preVerificationGas := new(big.Int).SetUint64(UserOpDefaultPreVerificationGasUint64)
-
-	userOp := entrypoint.PackedUserOperation{
-		Sender:             sender,
-		Nonce:              nonce,
-		InitCode:           []byte{},
-		CallData:           callData,
-		AccountGasLimits:   packU128Pair(callGas, verificationGas),
-		PreVerificationGas: preVerificationGas,
-		GasFees:            packU128Pair(maxPriorityFee, maxFee),
-		PaymasterAndData:   []byte{},
-		Signature:          []byte{},
-	}
-
-	userOpHash, err := entryPoint.GetUserOpHash(&bind.CallOpts{Context: r.Context()}, userOp)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletGetUserOpHashFailedText, err.Error())
-		return
-	}
-
-	sig, err := s.signUserOpHash(r.Context(), userOpHash[:])
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletUserOpSigningFailedText, err.Error())
-		return
-	}
-	userOp.Signature = sig
-
-	auth, beneficiary, err := s.relayerAuth(r.Context())
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletTxAuthFailedText, err.Error())
-		return
-	}
-
-	tx, err := entryPoint.HandleOps(auth, []entrypoint.PackedUserOperation{userOp}, beneficiary)
-	if err != nil {
-		log.Error(WalletHandleOpsFailedText, "tx", tx, "err", err)
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletHandleOpsFailedText, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"txHash": tx.Hash().Hex()})
-}
-
-func (s *Server) handleSendViaEOA(w http.ResponseWriter, r *http.Request, req SendTxRequest, from common.Address) {
-	activeChainClient, err := s.activeHTTP(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-	// Ensure we control this EOA
-	wlt, err := s.pickWallet(from)
-	if err != nil {
-		writeRPCError(w, http.StatusForbidden, JSONRPCErrorCodeInvalidRequest, "from address not controlled by this wallet", nil)
-		return
-	}
-
-	// "to" can be empty for contract creation
-	var to *common.Address
-	if strings.TrimSpace(req.Tx.To) != "" && req.Tx.To != HexPrefix0x {
-		t := common.HexToAddress(req.Tx.To)
-		to = &t
-	}
-
-	value := new(big.Int)
-	if req.Tx.Value != "" && req.Tx.Value != HexPrefix0x {
-		// assume hex string
-		v, ok := new(big.Int).SetString(strings.TrimPrefix(req.Tx.Value, HexPrefix0x), 16)
-		if !ok {
-			writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.value", req.Tx.Value)
-			return
-		}
-		value = v
-	}
-
-	data := common.FromHex(req.Tx.Data)
-
-	// Chain ID
-	chainID, err := activeChainClient.ChainID(r.Context())
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "failed to get chainId", err.Error())
-		return
-	}
-
-	// Nonce
-	nonce, err := activeChainClient.PendingNonceAt(r.Context(), from)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "failed to get nonce", err.Error())
-		return
-	}
-
-	var TxFormatError error
-
-	from = common.HexToAddress(req.Tx.From)
-
-	to, err = parseAddressPtr(req.Tx.To)
-	if err != nil {
-		TxFormatError = err
-	}
-
-	value, err = parseHexBigInt(req.Tx.Value)
-	if err != nil {
-		TxFormatError = err
-	}
-
-	data, err = parseHexData(req.Tx.Data)
-	if err != nil {
-		TxFormatError = err
-	}
-
-	if TxFormatError != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "failed to format transaction", TxFormatError)
-		return
-	}
-
-	msg := ethereum.CallMsg{
-		From:  from,
-		To:    to,
-		Value: value,
-		Data:  data,
-	}
-
-	estimatedGas, err := activeChainClient.EstimateGas(r.Context(), msg)
+	activeEthClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeRPCError(
 			w,
 			http.StatusInternalServerError,
 			JSONRPCErrorCodeInternalError,
-			"estimateGas failed",
+			"no active eth client",
+			err.Error(),
+		)
+		return
+
+	}
+
+	txSender := snap.TxSender.NewTxSender(activeEthClient)
+	txHash, err := txSender.Send(r.Context(), txReq)
+	if err != nil {
+		writeRPCError(
+			w,
+			http.StatusInternalServerError,
+			JSONRPCErrorCodeInternalError,
+			"transaction failed",
 			err.Error(),
 		)
 		return
 	}
 
-	// Fees (EIP-1559). Use request values if present, else suggest.
-	maxFeePerGas, maxPriorityFeePerGas, err := s.resolveEIP1559Fees(r.Context(), req)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "fee resolution failed", err.Error())
-		return
-	}
-
-	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   chainID,
-		Nonce:     nonce,
-		Gas:       estimatedGas,
-		To:        to,
-		Value:     value,
-		Data:      data,
-		GasTipCap: maxPriorityFeePerGas,
-		GasFeeCap: maxFeePerGas,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"txHash": txHash.Hex(),
 	})
-
-	signedTx, err := signEOATransaction(r.Context(), wlt, tx, chainID)
-	if err != nil {
-		writeRPCError(
-			w,
-			http.StatusInternalServerError,
-			JSONRPCErrorCodeInternalError,
-			"EOA signing failed",
-			err.Error(),
-		)
-		return
-	}
-
-	err = activeChainClient.SendTransaction(r.Context(), signedTx)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "SendTransaction failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"txHash": signedTx.Hash().Hex()})
 }
 
 func (s *Server) handleWalletEstimateSendTransaction(w http.ResponseWriter, r *http.Request) {
-	activeChainClient, err := s.activeHTTP(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-	chainId, err := activeChainClient.ChainID(s.ctx)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-	network, err := s.chainService.ResolveNetworkByChainID(chainId.Uint64())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
-		return
-	}
-
-	if strings.TrimSpace(network.EntryPoint) == "" {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletEntryPointNotConfiguredText, nil)
-		return
-	}
-
-	entryPointAddr := common.HexToAddress(network.EntryPoint)
-
-	entryPoint, err := entrypoint.NewEntryPoint(entryPointAddr, activeChainClient)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletBindEntryPointFailedText, err.Error())
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
@@ -785,145 +836,104 @@ func (s *Server) handleWalletEstimateSendTransaction(w http.ResponseWriter, r *h
 		return
 	}
 
-	sender := common.HexToAddress(req.Tx.From)
-	to := common.HexToAddress(req.Tx.To)
+	// Parse/normalize inputs
+	from := common.HexToAddress(req.Tx.From)
 
-	value := new(big.Int)
-	if req.Tx.Value != "" && req.Tx.Value != HexPrefix0x {
-		if _, ok := value.SetString(strings.TrimPrefix(req.Tx.Value, HexPrefix0x), 16); !ok {
-			writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "bad value hex", req.Tx.Value)
-			return
-		}
-	}
-	data := common.FromHex(req.Tx.Data)
-
-	accABI, err := quantumauthaccount.QuantumAuthAccountMetaData.GetAbi()
+	toPtr, err := parseAddressPtr(req.Tx.To)
 	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "account abi failed", err.Error())
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.to", err.Error())
 		return
 	}
 
-	callData, err := accABI.Pack("execute", to, value, data)
+	value, err := parseHexBigInt(req.Tx.Value)
 	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletPackExecuteFailedText, err.Error())
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.value", err.Error())
 		return
 	}
 
-	nonce, err := entryPoint.GetNonce(&bind.CallOpts{Context: r.Context()}, sender, big.NewInt(UserOpDefaultNonceKeyInt64))
+	data, err := parseHexData(req.Tx.Data)
 	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletGetNonceFailedText, err.Error())
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.data", err.Error())
 		return
 	}
 
-	head, err := activeChainClient.HeaderByNumber(r.Context(), nil)
+	// Parse optional EIP-1559 fee caps from request (hex string -> *big.Int)
+	maxFee, err := parseHexBigInt(req.Tx.MaxFeePerGas)
 	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "get latest header failed", err.Error())
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.maxFeePerGas", err.Error())
 		return
 	}
-	baseFee := head.BaseFee
-	if baseFee == nil {
-		baseFee = big.NewInt(0)
-	}
-
-	tipCap, err := s.httpChainClient.SuggestGasTipCap(r.Context())
+	maxPrio, err := parseHexBigInt(req.Tx.MaxPriorityFeePerGas)
 	if err != nil {
-		tipCap = big.NewInt(EIP1559DefaultMaxPriorityFeeWeiInt64)
-	}
-
-	maxFee := new(big.Int).Mul(baseFee, big.NewInt(EIP1559MaxFeeBaseFeeMultiplierInt64))
-	maxFee.Add(maxFee, tipCap)
-
-	preVerificationGas := new(big.Int).SetUint64(UserOpDefaultPreVerificationGasUint64)
-	callGasTmp := new(big.Int).SetUint64(UserOpEstimateTmpCallGasLimitUint64)
-	verificationGasTmp := new(big.Int).SetUint64(UserOpEstimateTmpVerificationGasLimitUint64)
-
-	userOp := entrypoint.PackedUserOperation{
-		Sender:             sender,
-		Nonce:              nonce,
-		InitCode:           []byte{},
-		CallData:           callData,
-		AccountGasLimits:   packU128Pair(callGasTmp, verificationGasTmp),
-		PreVerificationGas: preVerificationGas,
-		GasFees:            packU128Pair(tipCap, maxFee),
-		PaymasterAndData:   []byte{},
-		Signature:          []byte{},
-	}
-
-	userOpHash, err := entryPoint.GetUserOpHash(&bind.CallOpts{Context: r.Context()}, userOp)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletGetUserOpHashFailedText, err.Error())
+		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, "invalid tx.maxPriorityFeePerGas", err.Error())
 		return
 	}
-
-	sig, err := s.signUserOpHash(r.Context(), userOpHash[:])
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletUserOpSigningFailedText, err.Error())
-		return
+	// treat zero as “unset”
+	if maxFee != nil && maxFee.Sign() == 0 {
+		maxFee = nil
 	}
-	userOp.Signature = sig
+	if maxPrio != nil && maxPrio.Sign() == 0 {
+		maxPrio = nil
+	}
 
-	callGasU64, err := activeChainClient.EstimateGas(r.Context(), ethereum.CallMsg{
-		From: entryPointAddr,
-		To:   &sender,
-		Data: callData,
+	activeEthClient, err := snap.Chains.ActiveHTTP(r.Context())
+	if err != nil {
+		writeRPCError(
+			w,
+			http.StatusInternalServerError,
+			JSONRPCErrorCodeInternalError,
+			"no active eth client",
+			err.Error(),
+		)
+		return
+
+	}
+
+	txSender := snap.TxSender.NewTxSender(activeEthClient)
+
+	eoaEst, aaEst, err := txSender.Estimate(r.Context(), txsender.TxRequest{
+		From:                 from,
+		To:                   toPtr,
+		Value:                value,
+		Data:                 data,
+		MaxFeePerGas:         maxFee,
+		MaxPriorityFeePerGas: maxPrio,
 	})
 	if err != nil {
-		log.Error("estimate execute callGas failed; falling back", "err", err)
-		callGasU64 = GasEstimateCallGasFallbackUint64
-	}
-	callGasLimit := new(big.Int).SetUint64(applyBpsBuffer(callGasU64, GasBufferBpsCallGasLimit))
-
-	missingFunds := big.NewInt(UserOpDefaultMissingFundsWeiInt64)
-
-	validateCalldata, err := accABI.Pack("validateUserOp", userOp, userOpHash, missingFunds)
-	if err != nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "pack validateUserOp failed", err.Error())
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "estimate failed", err.Error())
 		return
 	}
 
-	verificationGasU64, err := activeChainClient.EstimateGas(r.Context(), ethereum.CallMsg{
-		From: entryPointAddr,
-		To:   &sender,
-		Data: validateCalldata,
+	// Decide response format (keep same JSON shape you already had)
+	if aaEst != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"type": "aa",
+
+			"maxPriorityFeePerGasWei": aaEst.MaxPriorityFeePerGasWei.String(),
+			"maxFeePerGasWei":         aaEst.MaxFeePerGasWei.String(),
+
+			"callGasLimit":         aaEst.CallGasLimit.String(),
+			"verificationGasLimit": aaEst.VerificationGasLimit.String(),
+			"preVerificationGas":   aaEst.PreVerificationGas.String(),
+
+			"accountGasLimitsHex": aaEst.AccountGasLimitsHex,
+			"gasFeesHex":          aaEst.GasFeesHex,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"type": "eoa",
+		"gas":  eoaEst.GasLimit,
+
+		"maxPriorityFeePerGasWei": eoaEst.MaxPriorityFeePerGasWei.String(),
+		"maxFeePerGasWei":         eoaEst.MaxFeePerGasWei.String(),
 	})
-	if err != nil {
-		log.Error("estimate validateUserOp verificationGas failed; falling back", "err", err)
-		verificationGasU64 = GasEstimateVerificationGasFallbackUint64
-	}
-	verificationGasLimit := new(big.Int).SetUint64(applyBpsBuffer(verificationGasU64, GasBufferBpsVerificationGasLimit))
-
-	agl := packU128Pair(callGasLimit, verificationGasLimit)
-	gf := packU128Pair(tipCap, maxFee)
-
-	resp := map[string]any{
-		"baseFeeWei":               baseFee.String(),
-		"baseFeeGwei":              weiToGweiString(baseFee),
-		"maxPriorityFeePerGasWei":  tipCap.String(),
-		"maxPriorityFeePerGasGwei": weiToGweiString(tipCap),
-		"maxFeePerGasWei":          maxFee.String(),
-		"maxFeePerGasGwei":         weiToGweiString(maxFee),
-
-		"callGasLimit":         callGasLimit.String(),
-		"verificationGasLimit": verificationGasLimit.String(),
-		"preVerificationGas":   preVerificationGas.String(),
-
-		"accountGasLimitsHex":     HexPrefix0x + hex.EncodeToString(agl[:]),
-		"gasFeesHex":              HexPrefix0x + hex.EncodeToString(gf[:]),
-		"callGasLimitHex":         HexPrefix0x + callGasLimit.Text(16),
-		"verificationGasLimitHex": HexPrefix0x + verificationGasLimit.Text(16),
-		"preVerificationGasHex":   HexPrefix0x + preVerificationGas.Text(16),
-		"maxFeePerGasHex":         HexPrefix0x + maxFee.Text(16),
-		"maxPriorityFeePerGasHex": HexPrefix0x + tipCap.Text(16),
-	}
-
-	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleWalletPersonalSign(w http.ResponseWriter, r *http.Request) {
-	// NOTE: requireWalletRuntime checks onChain.User/Device; this endpoint only needs onChain != nil.
-	// If you want to keep original semantics, add a separate helper requireOnChain(w,s).
-	if s.onChain == nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletRuntimeNotInitializedText, nil)
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
@@ -938,31 +948,28 @@ func (s *Server) handleWalletPersonalSign(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	wallet, err := s.pickWallet(addr)
+	res, err := snap.WalletSigner.PersonalSign(r.Context(), walletsigner.PersonalSignRequest{
+		Address: addr,
+		Message: req.Message,
+	})
+
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{JSONKeyUnauthorized: true})
 		return
 	}
 
-	msgBytes, err := parsePersonalSignMessage(req.Message)
-	if err != nil {
-		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, WalletInvalidMessageText, err.Error())
-		return
-	}
-
-	digest := eip191HashPersonalMessage(msgBytes)
-	sig, err := wallet.SignHash(r.Context(), digest)
+	sigHex, err := walletsigner.SigToHex(res.Signature)
 	if err != nil {
 		writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletSignFailedText, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"signature": sigToHex(sig)})
+	writeJSON(w, http.StatusOK, map[string]any{"signature": sigHex})
 }
 
 func (s *Server) handleWalletSignTypedDataV4(w http.ResponseWriter, r *http.Request) {
-	if s.onChain == nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletRuntimeNotInitializedText, nil)
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
@@ -977,28 +984,29 @@ func (s *Server) handleWalletSignTypedDataV4(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	wallet, err := s.pickWallet(addr)
+	res, err := snap.WalletSigner.SignTypedDataV4(r.Context(), walletsigner.SignTypedDataV4Request{
+		Address:       addr,
+		TypedDataJSON: req.TypedDataJson,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{JSONKeyUnauthorized: true})
 		return
 	}
 
-	digest, err := eip712DigestV4(req.TypedDataJson)
-	if err != nil {
-		writeRPCError(w, http.StatusBadRequest, JSONRPCErrorCodeInvalidParams, WalletInvalidTypedDataText, err.Error())
-		return
-	}
-
-	sig, err := wallet.SignHash(r.Context(), digest)
+	sigHex, err := walletsigner.SigToHex(res.Signature)
 	if err != nil {
 		writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletSignFailedText, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"signature": sigToHex(sig)})
+	writeJSON(w, http.StatusOK, map[string]any{"signature": sigHex})
 }
 
 func (s *Server) handleWalletRPC(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
 	var req walletRPCReq
 	if !decodeJSONBodyRPC(w, r, &req) {
 		return
@@ -1010,7 +1018,7 @@ func (s *Server) handleWalletRPC(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Method {
 	case "eth_getBalance":
-		resultHex, err := s.handleEthGetBalance(r.Context(), req.Params)
+		resultHex, err := snap.RPC.EthGetBalance(r.Context(), req.Params)
 		if err != nil {
 			// Invalid params should be 400 + InvalidParams
 			var rpcCode int
@@ -1042,14 +1050,12 @@ func (s *Server) handleWalletRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Request) {
-	if !requireWalletRuntime(w, s) {
-		return
-	}
-	if !requireEthClient(w, s) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
-	activeChainClient, err := s.activeHTTP(r.Context())
+	activeChainClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "no active chain", err.Error())
 		return
@@ -1060,13 +1066,13 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletChainIDFetchFailedText, err.Error())
 		return
 	}
-	network, _ := s.chainService.ResolveNetworkByChainID(chainID.Uint64())
+	network, _ := snap.Chains.ResolveNetworkByChainID(chainID.Uint64())
 
 	cryptoAssets := []assetOut{}
-	if s.assetsManager != nil && network.NetworkName != "" {
-		contractAddr, _ := s.onChain.ContractAddress()
+	if snap.Assets != nil && network.NetworkName != "" {
+		contractAddr, _ := snap.OnChain.ContractAddress()
 
-		list, err := s.assetsManager.ListForNetwork(r.Context(), network.NetworkName)
+		list, err := snap.Assets.ListForNetwork(r.Context(), network.NetworkName)
 		if err != nil {
 			writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletAssetsLoadFailedText, err.Error())
 			return
@@ -1074,7 +1080,7 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 
 		for _, as := range list {
 			if strings.EqualFold(as.Address, common.HexToAddress(constants.NativeAddr).Hex()) {
-				weiDec, err := s.getBalanceWeiDecimal(r.Context(), contractAddr)
+				weiDec, err := snap.Auth.GetBalanceWeiDecimal(r.Context(), activeChainClient, contractAddr)
 				if err != nil {
 					writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletNativeBalanceFetchFailedText, err.Error())
 					return
@@ -1091,7 +1097,7 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 				continue
 			}
 
-			balWei, err := s.assetsManager.BalanceOf(r.Context(), network.NetworkName, common.HexToAddress(as.Address), contractAddr)
+			balWei, err := snap.Assets.BalanceOf(r.Context(), network.NetworkName, common.HexToAddress(as.Address), contractAddr)
 			if err != nil {
 				log.Error("asset balance failed", "asset", as.Address, "err", err)
 				continue
@@ -1109,23 +1115,23 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	err = s.onChain.LoadContractForCurrentChain(s.ctx, s.cwStore)
+	err = snap.OnChain.LoadContractForCurrentChain(s.ctx, snap.CWStore)
 	if err != nil {
 		return
 	}
 
 	accts := []acctIn{
-		{Addr: s.onChain.User.Address(), Role: "user (EOA)"},
-		{Addr: s.onChain.Device.Address(), Role: "device (TPM)"},
+		{Addr: snap.OnChain.User.Address(), Role: "user (EOA)"},
+		{Addr: snap.OnChain.Device.Address(), Role: "device (TPM)"},
 	}
 
 	// Always return the AA contract row (zero address when not deployed)
 	contractAddr := common.Address{}
 
-	if s.onChain.Contract != nil {
-		if ca, err := s.onChain.ContractAddress(); err == nil && ca != (common.Address{}) {
+	if snap.OnChain.Contract != nil {
+		if ca, err := snap.OnChain.ContractAddress(); err == nil && ca != (common.Address{}) {
 			contractAddr = ca
-		} else if addr := strings.TrimSpace(s.onChain.Contract.Address); addr != "" {
+		} else if addr := strings.TrimSpace(snap.OnChain.Contract.Address); addr != "" {
 			contractAddr = common.HexToAddress(addr)
 		}
 	}
@@ -1134,7 +1140,7 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 
 	out := make([]acctOut, 0, len(accts))
 	for _, a := range accts {
-		weiDec, err := s.getBalanceWeiDecimal(r.Context(), a.Addr)
+		weiDec, err := snap.Auth.GetBalanceWeiDecimal(r.Context(), activeChainClient, a.Addr)
 		if err != nil {
 			writeRPCError(w, http.StatusOK, JSONRPCErrorCodeInternalError, WalletBalanceFetchFailedText, err.Error())
 			return
@@ -1165,11 +1171,8 @@ func (s *Server) handleWalletAccountsSummary(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleWalletNetworkMetadata(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
-		return
-	}
-	if s.networksManager == nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
@@ -1180,8 +1183,7 @@ func (s *Server) handleWalletNetworkMetadata(w http.ResponseWriter, r *http.Requ
 
 	ctx := r.Context()
 
-	// 1) Probe the RPC
-	meta, err := s.networksManager.ProbeRPC(ctx, req.RpcUrl)
+	meta, err := snap.Networks.ProbeRPC(ctx, req.RpcUrl)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			JSONKeyOK:    false,
@@ -1190,8 +1192,7 @@ func (s *Server) handleWalletNetworkMetadata(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// 2) Enrich from store + chainId defaults (+ entrypoint detection if you add it)
-	meta = s.networksManager.EnrichByChain(ctx, meta)
+	meta = snap.Networks.EnrichByChain(ctx, meta)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		JSONKeyOK:   true,
@@ -1200,15 +1201,12 @@ func (s *Server) handleWalletNetworkMetadata(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleWalletNetworks(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
-		return
-	}
-	if s.networksManager == nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
-	activeChainClient, err := s.activeHTTP(r.Context())
+	activeChainClient, err := snap.Chains.ActiveHTTP(r.Context())
 	if err != nil {
 		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "no active chain", err.Error())
 		return
@@ -1220,7 +1218,7 @@ func (s *Server) handleWalletNetworks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nets, err := s.networksManager.ListFromFile(r.Context())
+	nets, err := snap.Networks.ListFromFile(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
@@ -1237,12 +1235,8 @@ func (s *Server) handleWalletNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWalletSetNetwork(w http.ResponseWriter, r *http.Request) {
-	if !requireEthClient(w, s) {
-		return
-	}
-
-	if s.networksManager == nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "networks manager not initialized"})
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
 		return
 	}
 
@@ -1257,12 +1251,12 @@ func (s *Server) handleWalletSetNetwork(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 1) Find the network the user has added (by chainIdHex)
-	netInfo, found, err := s.networksManager.FindByChainIdHex(r.Context(), wantHex)
+	netInfo, found, err := snap.Networks.FindByChainIdHex(r.Context(), wantHex)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
+
 	if !found {
 		writeJSON(w, http.StatusOK, map[string]any{
 			JSONKeyOK:       false,
@@ -1272,22 +1266,25 @@ func (s *Server) handleWalletSetNetwork(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 2) Switch active chain (no-op if already active)
-	if err := s.chainService.SwitchChain(r.Context(), netInfo.Name); err != nil {
+	if err := snap.Chains.SwitchChain(r.Context(), netInfo.Name); err != nil {
 		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: err.Error()})
 		return
 	}
 
-	if s.onChain != nil {
-		_ = s.onChain.ValidateChain(r.Context())
+	if snap.OnChain != nil {
+		_ = snap.OnChain.ValidateChain(r.Context())
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{JSONKeyOK: true})
 }
 
 func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
 
-	if s.deployer == nil {
+	if snap.Deployer == nil {
 		writeJSON(w, http.StatusInternalServerError, deployAAResponse{
 			OK:  false,
 			Err: "deployer not initialized",
@@ -1310,7 +1307,7 @@ func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	res, err := s.deployer.DeployAAOnChainIDHex(r.Context(), req.ChainIDHex, req.RecoveryAddress)
+	res, err := snap.Deployer.DeployAAOnChainIDHex(r.Context(), req.ChainIDHex, req.RecoveryAddress)
 	if err != nil {
 		// Use 502 if this is typically upstream/rpc related; otherwise 500 is fine.
 		writeJSON(w, http.StatusInternalServerError, deployAAResponse{
@@ -1327,6 +1324,11 @@ func (s *Server) handleDeployContractOnChain(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleWalletAddNetwork(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
 	var req shared.AddNetworkReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1340,7 +1342,7 @@ func (s *Server) handleWalletAddNetwork(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	added, err := s.networksManager.AddNetwork(ctx, networkConfig)
+	added, err := snap.Networks.AddNetwork(ctx, networkConfig)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			JSONKeyOK:    false,
@@ -1359,6 +1361,11 @@ func (s *Server) handleWalletAddNetwork(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
 	var req removeNetworkReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1375,7 +1382,7 @@ func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	if err := s.networksManager.RemoveNetworkByChainIdHex(ctx, chainIdHex); err != nil {
+	if err := snap.Networks.RemoveNetworkByChainIdHex(ctx, chainIdHex); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			JSONKeyOK:    false,
 			JSONKeyError: "failed to remove network",
@@ -1393,6 +1400,10 @@ func (s *Server) handleWalletRemoveNetwork(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleWalletUpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
 	var req shared.UpdateNetworkReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1409,7 +1420,7 @@ func (s *Server) handleWalletUpdateNetwork(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	updated, err := s.networksManager.UpdateNetworkByChainIdHex(ctx, chainIdHex, req.Patch)
+	updated, err := snap.Networks.UpdateNetworkByChainIdHex(ctx, chainIdHex, req.Patch)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			JSONKeyOK:    false,
@@ -1428,6 +1439,11 @@ func (s *Server) handleWalletUpdateNetwork(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
 	var req listAssetsReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1447,7 +1463,7 @@ func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) 
 	// OPTIONAL (recommended): bootstrap defaults for this network without overwriting user edits.
 	// If you don’t have defaults yet, just use an empty slice.
 	var defaultAddrs []string
-	if err := s.assetsManager.EnsureStoreForNetwork(ctx, network, defaultAddrs); err != nil {
+	if err := snap.Assets.EnsureStoreForNetwork(ctx, network, defaultAddrs); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			JSONKeyOK:    false,
 			JSONKeyError: "failed to load assets store",
@@ -1456,7 +1472,7 @@ func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	list, err := s.assetsManager.ListForNetwork(ctx, network)
+	list, err := snap.Assets.ListForNetwork(ctx, network)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			JSONKeyOK:    false,
@@ -1485,6 +1501,11 @@ func (s *Server) handleWalletListAssets(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleWalletAddAsset(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
+
 	var req addAssetReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1508,7 +1529,7 @@ func (s *Server) handleWalletAddAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asset, err := s.assetsManager.AddAsset(s.ctx, network, address)
+	asset, err := snap.Assets.AddAsset(s.ctx, network, address)
 	if err != nil {
 		// treat as user-input / chain lookup error by default
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1532,6 +1553,10 @@ func (s *Server) handleWalletAddAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWalletRemoveAsset(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
 	var req removeAssetReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1557,7 +1582,7 @@ func (s *Server) handleWalletRemoveAsset(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	if err := s.assetsManager.RemoveAsset(ctx, network, address); err != nil {
+	if err := snap.Assets.RemoveAsset(ctx, network, address); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			JSONKeyOK:    false,
 			JSONKeyError: "failed to remove asset",
@@ -1576,6 +1601,10 @@ func (s *Server) handleWalletRemoveAsset(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleWalletAssetMetadata(w http.ResponseWriter, r *http.Request) {
+	snap, ok := s.requireWeb3(w, r)
+	if !ok {
+		return
+	}
 	var req assetMetadataReq
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -1602,7 +1631,7 @@ func (s *Server) handleWalletAssetMetadata(w http.ResponseWriter, r *http.Reques
 	// Important: use request context (cancels if popup closes / user types again)
 	ctx := r.Context()
 
-	asset, err := s.assetsManager.FetchAsset(ctx, network, address)
+	asset, err := snap.Assets.FetchAsset(ctx, network, address)
 	if err != nil {
 		// keep it user-friendly, but include details if you want for debugging
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1623,4 +1652,54 @@ func (s *Server) handleWalletAssetMetadata(w http.ResponseWriter, r *http.Reques
 			"logoURI":  asset.LogoURI,
 		},
 	})
+}
+
+func toTxRequest(req SendTxRequest) (txsender.TxRequest, error) {
+	if strings.TrimSpace(req.Tx.From) == "" {
+		return txsender.TxRequest{}, fmt.Errorf("tx.from is required")
+	}
+
+	if !common.IsHexAddress(req.Tx.From) {
+		return txsender.TxRequest{}, fmt.Errorf("invalid from address %q", req.Tx.From)
+	}
+	from := common.HexToAddress(req.Tx.From)
+
+	to, err := parseAddressPtr(req.Tx.To)
+	if err != nil {
+		return txsender.TxRequest{}, err
+	}
+
+	value, err := parseHexBigInt(req.Tx.Value)
+	if err != nil {
+		return txsender.TxRequest{}, err
+	}
+	if value == nil {
+		value = big.NewInt(0)
+	}
+
+	data := common.FromHex(strings.TrimSpace(req.Tx.Data))
+
+	// Optional fee overrides (if you support them)
+	var maxFee, maxPrio *big.Int
+	if req.Tx.MaxFeePerGas != "" {
+		maxFee, err = parseHexBigInt(req.Tx.MaxFeePerGas)
+		if err != nil {
+			return txsender.TxRequest{}, fmt.Errorf("invalid maxFeePerGas: %w", err)
+		}
+	}
+	if req.Tx.MaxPriorityFeePerGas != "" {
+		maxPrio, err = parseHexBigInt(req.Tx.MaxPriorityFeePerGas)
+		if err != nil {
+			return txsender.TxRequest{}, fmt.Errorf("invalid maxPriorityFeePerGas: %w", err)
+		}
+	}
+
+	return txsender.TxRequest{
+		From:                 from,
+		To:                   to,
+		Value:                value,
+		Data:                 data,
+		MaxFeePerGas:         maxFee,
+		MaxPriorityFeePerGas: maxPrio,
+	}, nil
 }

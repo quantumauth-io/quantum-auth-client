@@ -10,7 +10,6 @@ import (
 )
 
 func (r *Runtime) estimateGasLimit(ctx context.Context, from common.Address, to *common.Address, value *big.Int, data []byte) uint64 {
-
 	client, err := r.activeHTTP(ctx)
 	if err != nil {
 		return 0

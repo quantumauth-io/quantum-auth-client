@@ -1,0 +1,443 @@
+[
+  {
+    "id": "app.title",
+    "translation": "QuantumAuth Client"
+  },
+  {
+    "id": "header.lock",
+    "translation": "Verrouiller"
+  },
+  {
+    "id": "about.title",
+    "translation": "QuantumAuth  {{.Version}}"
+  },
+  {
+    "id": "about.subtitle",
+    "translation": "Interface graphique de bureau (Fyne)"
+  },
+  {
+    "id": "about.description",
+    "translation": "Environnement d’exécution de signatures TPM et post-quantiques, flux de défis et gestion des clés développeur."
+  },
+  {
+    "id": "auth.button.show_keys",
+    "translation": "Afficher les clés publiques de l’appareil"
+  },
+  {
+    "id": "auth.status.keys_fetched",
+    "translation": "Clés récupérées ✅ (voir l’onglet Journaux)"
+  },
+  {
+    "id": "auth.status.error",
+    "translation": "Erreur : {{.Error}}"
+  },
+  {
+    "id": "auth.placeholder.hint",
+    "translation": "Connectez ici vos méthodes existantes de services client."
+  },
+  {
+    "id": "common.create",
+    "translation": "Créer"
+  },
+  {
+    "id": "common.cancel",
+    "translation": "Annuler"
+  },
+  {
+    "id": "common.delete",
+    "translation": "Supprimer"
+  },
+  {
+    "id": "common.copy",
+    "translation": "Copier"
+  },
+  {
+    "id": "common.error",
+    "translation": "Erreur"
+  },
+  {
+    "id": "common.loading",
+    "translation": "Chargement…"
+  },
+  {
+    "id": "common.confirm",
+    "translation": "Confirmer"
+  },
+  {
+    "id": "common.close",
+    "translation": "Fermer"
+  },
+  {
+    "id": "common.yes",
+    "translation": "Oui"
+  },
+  {
+    "id": "common.no",
+    "translation": "Non"
+  },
+  {
+    "id": "common.loading",
+    "translation": "Chargement…"
+  },
+
+  {
+    "id": "devkeys.title",
+    "translation": "Clés développeur"
+  },
+  {
+    "id": "devkeys.create",
+    "translation": "Créer une clé"
+  },
+  {
+    "id": "devkeys.unlock_required",
+    "translation": "Déverrouillez le client pour gérer les clés développeur."
+  },
+  {
+    "id": "devkeys.unavailable",
+    "translation": "Les clés développeur ne sont pas disponibles."
+  },
+  {
+    "id": "devkeys.load_failed",
+    "translation": "Impossible de charger les clés développeur."
+  },
+  {
+    "id": "devkeys.empty",
+    "translation": "Aucune clé développeur pour le moment. Créez-en une pour commencer."
+  },
+  {
+    "id": "devkeys.app_id",
+    "translation": "ID de l’application"
+  },
+  {
+    "id": "devkeys.app_name",
+    "translation": "Nom de l’application"
+  },
+  {
+    "id": "devkeys.public_key",
+    "translation": "Clé publique"
+  },
+  {
+    "id": "devkeys.private_key",
+    "translation": "Clé privée"
+  },
+  {
+    "id": "devkeys.show_private",
+    "translation": "Afficher la clé privée"
+  },
+  {
+    "id": "devkeys.hide_private",
+    "translation": "Masquer la clé privée"
+  },
+  {
+    "id": "devkeys.create_title",
+    "translation": "Créer une clé développeur"
+  },
+  {
+    "id": "devkeys.form.app_id_ph",
+    "translation": "ex. com.example.app"
+  },
+  {
+    "id": "devkeys.form.app_name_ph",
+    "translation": "ex. Mon application"
+  },
+  {
+    "id": "devkeys.delete_title",
+    "translation": "Supprimer la clé développeur"
+  },
+  {
+    "id": "devkeys.delete_confirm_fmt",
+    "translation": "Supprimer « {{.AppName}} » ({{.AppID}}) ? Cette action est irréversible."
+  },
+  {
+    "id": "devkeys.err_conflict",
+    "translation": "Une clé existe déjà pour cet ID d’application."
+  },
+  {
+    "id": "devkeys.err_invalid",
+    "translation": "L’ID de l’application et le nom sont obligatoires."
+  },
+  {
+    "id": "devkeys.reveal_title",
+    "translation": "Afficher la clé privée"
+  },
+  {
+    "id": "devkeys.reveal_confirm",
+    "translation": "N’effectuez cette action que dans un environnement sécurisé. Continuer ?"
+  },
+  {
+    "id": "error.password_required",
+    "translation": "Mot de passe requis"
+  },
+  {
+    "id": "error.password_mismatch",
+    "translation": "Les mots de passe ne correspondent pas"
+  },
+
+  {
+    "id": "lock.set_password.title",
+    "translation": "Définir un mot de passe"
+  },
+  {
+    "id": "lock.set_password.subtitle",
+    "translation": "Ce mot de passe déverrouille votre portefeuille local et les clés de l’appareil."
+  },
+  {
+    "id": "lock.set_password.pw1",
+    "translation": "Créer un mot de passe (min. 8 caractères)"
+  },
+  {
+    "id": "lock.set_password.pw2",
+    "translation": "Confirmer le mot de passe"
+  },
+  {
+    "id": "lock.set_password.cta",
+    "translation": "Créer et déverrouiller"
+  },
+  { "id": "lock.unlock.title", "translation": "Déverrouiller QuantumAuth" },
+  { "id": "lock.unlock.password_placeholder", "translation": "Mot de passe" },
+  { "id": "lock.unlock.cta", "translation": "Déverrouiller" },
+  {
+    "id": "lock.vault.error",
+    "translation": "Erreur du coffre-fort : {{.Error}}"
+  },
+  {
+    "id": "logs.title",
+    "translation": "Journaux"
+  },
+  {
+    "id": "settings.title",
+    "translation": "Paramètres"
+  },
+  {
+    "id": "settings.form.language",
+    "translation": "Langue"
+  },
+  {
+    "id": "settings.form.qa_env",
+    "translation": "Environnement QA"
+  },
+  {
+    "id": "settings.form.server_url",
+    "translation": "URL du serveur"
+  },
+  {
+    "id": "settings.form.local_host",
+    "translation": "Hôte local"
+  },
+  {
+    "id": "settings.form.port",
+    "translation": "Port"
+  },
+  {
+    "id": "settings.form.email",
+    "translation": "Adresse e-mail"
+  },
+  {
+    "id": "settings.form.device_label",
+    "translation": "Nom de l’appareil"
+  },
+  {
+    "id": "settings.form.infura_key",
+    "translation": "Clé API Infura"
+  },
+  {
+    "id": "settings.form.active_network",
+    "translation": "Réseau actif"
+  },
+  {
+    "id": "settings.form.active_rpc",
+    "translation": "RPC actif"
+  },
+  {
+    "id": "settings.form.pq_label",
+    "translation": "Libellé post-quantique"
+  },
+  {
+    "id": "settings.form.tpm_owner_auth",
+    "translation": "Autorisation du propriétaire TPM"
+  },
+  {
+    "id": "settings.placeholder.server_url",
+    "translation": "https://api.quantumauth.io/quantum-auth/v1"
+  },
+  {
+    "id": "settings.placeholder.local_host",
+    "translation": "127.0.0.1"
+  },
+  {
+    "id": "settings.placeholder.port",
+    "translation": "6137"
+  },
+  {
+    "id": "settings.placeholder.email",
+    "translation": "Adresse e-mail"
+  },
+  {
+    "id": "settings.placeholder.device_label",
+    "translation": "appareil-par-défaut"
+  },
+  {
+    "id": "settings.placeholder.infura_key",
+    "translation": "Clé API Infura (optionnelle)"
+  },
+  {
+    "id": "settings.placeholder.active_network",
+    "translation": "sepolia"
+  },
+  {
+    "id": "settings.placeholder.active_rpc",
+    "translation": "Infura"
+  },
+  {
+    "id": "settings.placeholder.tpm_owner_auth",
+    "translation": "(généralement vide)"
+  },
+  {
+    "id": "settings.button.save",
+    "translation": "Enregistrer les paramètres"
+  },
+  {
+    "id": "settings.button.init_runtime",
+    "translation": "Initialiser l’environnement d’exécution"
+  },
+  {
+    "id": "settings.status.saved",
+    "translation": "Enregistré ✅"
+  },
+  {
+    "id": "settings.status.save_failed",
+    "translation": "Échec de l’enregistrement : {{.Error}}"
+  },
+  {
+    "id": "settings.status.initializing",
+    "translation": "Initialisation..."
+  },
+  {
+    "id": "settings.status.runtime_ready",
+    "translation": "Environnement prêt ✅"
+  },
+  {
+    "id": "settings.status.init_failed",
+    "translation": "Échec de l’initialisation : {{.Error}}"
+  },
+  { "id": "setup.vault_not_loaded", "translation": "Coffre-fort non chargé (déverrouillez d’abord)." },
+
+  { "id": "setup.title", "translation": "Configuration" },
+  { "id": "setup.intro", "translation": "Complétez les étapes ci-dessous. Seules les étapes inachevées sont affichées." },
+
+  { "id": "setup.complete_title", "translation": "Configuration terminée ✅" },
+  { "id": "setup.complete_hint", "translation": "Vous pouvez utiliser les onglets Portefeuille et Authentification." },
+
+  { "id": "setup.wallet.title", "translation": "Créer un portefeuille" },
+  { "id": "setup.wallet.description", "translation": "Crée votre portefeuille local non-custodial et le portefeuille de l’appareil." },
+  { "id": "setup.wallet.button", "translation": "Créer le portefeuille" },
+  { "id": "setup.wallet.creating", "translation": "Création du portefeuille..." },
+  { "id": "setup.wallet.unlock_missing", "translation": "Mot de passe de déverrouillage manquant (verrouillez/déverrouillez à nouveau)." },
+  { "id": "setup.wallet.error", "translation": "Erreur du portefeuille : {{.Error}}" },
+  { "id": "setup.wallet.save_error", "translation": "Échec de l’enregistrement : {{.Error}}" },
+  { "id": "setup.wallet.created", "translation": "Portefeuille créé ✅" },
+
+  { "id": "setup.register.title", "translation": "Inscription sur la plateforme QA" },
+  { "id": "setup.register.help", "translation": "Choisissez une option. Nous n’essaierons pas de détecter si un compte existe." },
+  { "id": "setup.register.email_placeholder", "translation": "Adresse e-mail" },
+  { "id": "setup.register.device_label_placeholder", "translation": "Nom de l’appareil" },
+
+  { "id": "setup.register.mode.new", "translation": "Créer un nouveau compte" },
+  { "id": "setup.register.mode.add", "translation": "Ajouter cet appareil à mon compte" },
+
+  { "id": "setup.register.default_mode", "translation": "Créer un nouveau compte" },
+  { "id": "setup.register.continue", "translation": "Continuer" },
+  {
+    "id": "setup.register.username_placeholder",
+    "translation": "Nom d’utilisateur"
+  },
+  {
+    "id": "setup.register.username_required",
+    "translation": "Le nom d’utilisateur est requis."
+  },
+  { "id": "setup.register.email_required", "translation": "L’adresse e-mail est requise." },
+  { "id": "setup.register.registering", "translation": "Inscription..." },
+  { "id": "setup.register.failed", "translation": "Échec de l’inscription : {{.Error}}" },
+  { "id": "setup.register.save_failed", "translation": "Échec de l’enregistrement : {{.Error}}" },
+  { "id": "setup.register.done", "translation": "Inscrit ✅" },
+
+  { "id": "setup.pair.title", "translation": "Appairer l’extension QA Bridge" },
+  { "id": "setup.pair.help", "translation": "Générez un jeton d’appairage, puis collez-le dans l’extension QA Bridge." },
+  { "id": "setup.pair.token_placeholder", "translation": "Cliquez sur « Générer un jeton »" },
+  { "id": "setup.pair.copy", "translation": "Copier le jeton" },
+  { "id": "setup.pair.no_token", "translation": "Aucun jeton à copier pour le moment." },
+  { "id": "setup.pair.copied", "translation": "Copié ✅" },
+
+  { "id": "setup.pair.generate", "translation": "Générer un jeton" },
+  { "id": "setup.pair.regenerate", "translation": "Régénérer le jeton" },
+  { "id": "setup.pair.generating", "translation": "Génération..." },
+  { "id": "setup.pair.error", "translation": "Erreur : {{.Error}}" },
+  { "id": "setup.pair.save_error", "translation": "Échec de l’enregistrement : {{.Error}}" },
+  { "id": "setup.pair.generated", "translation": "Jeton généré ✅" },
+  {
+    "id": "tabs.setup",
+    "translation": "Configuration"
+  },
+  {
+    "id": "tabs.settings",
+    "translation": "Paramètres"
+  },
+  {
+    "id": "tabs.auth",
+    "translation": "Authentification"
+  },
+  {
+    "id": "tabs.devkeys",
+    "translation": "Clés développeur"
+  },
+  {
+    "id": "tabs.logs",
+    "translation": "Journaux"
+  },
+  {
+    "id": "tabs.about",
+    "translation": "À propos"
+  },
+  {
+    "id": "tabs.wallet",
+    "translation": "Portefeuille"
+  },
+  { "id": "wallet.network.label", "translation": "Réseau" },
+  { "id": "wallet.network.fallback_chain", "translation": "Chaîne" },
+  { "id": "wallet.network.active_none", "translation": "Actif : (aucun)" },
+  { "id": "wallet.network.active_prefix", "translation": "Actif : " },
+  { "id": "wallet.network.active_fmt", "translation": "Actif : {{.network}} (chainId={{.chainId}} rpc={{.rpc}})" },
+
+  { "id": "wallet.unlock_required", "translation": "Déverrouillage requis pour accéder aux portefeuilles." },
+  { "id": "wallet.runtime_error", "translation": "Erreur du runtime du portefeuille (voir les journaux)." },
+  { "id": "wallet.web3_error", "translation": "Erreur du runtime Web3 (voir les journaux)." },
+  { "id": "wallet.web3_not_ready", "translation": "Runtime Web3 non prêt." },
+  { "id": "wallet.wallets_not_ready", "translation": "Portefeuilles non prêts." },
+
+  { "id": "wallet.user.title", "translation": "Portefeuille utilisateur (EOA)" },
+  { "id": "wallet.device.title", "translation": "Portefeuille appareil (TPM)" },
+  { "id": "wallet.contract.title", "translation": "Portefeuille contrat (AA)" },
+
+  { "id": "wallet.address.label", "translation": "Adresse" },
+  { "id": "wallet.copy_btn", "translation": "Copier" },
+
+  { "id": "wallet.balance_loading", "translation": "Solde : …" },
+  { "id": "wallet.balance_no_active_network", "translation": "Solde : (aucun réseau actif)" },
+  { "id": "wallet.balance_error", "translation": "Solde : erreur" },
+  { "id": "wallet.balance_fmt", "translation": "Solde : {{.amount}} ETH" },
+
+  { "id": "wallet.contract.account", "translation": "Compte" },
+  { "id": "wallet.contract.status_configured", "translation": "Statut : configuré" },
+  { "id": "wallet.contract.status_not_configured", "translation": "Statut : non configuré" },
+  { "id": "wallet.contract.status_error", "translation": "Statut : erreur" },
+  { "id": "wallet.contract.validate_chain", "translation": "Valider la chaîne" },
+
+  { "id": "wallet.contract.recovery_placeholder", "translation": "Adresse EOA de récupération (0x...)" },
+  { "id": "wallet.contract.network_loading", "translation": "Réseau : (chargement…)" },
+  { "id": "wallet.contract.network_prefix", "translation": "Réseau : " },
+  { "id": "wallet.contract.network_none", "translation": "Réseau : (aucun)" },
+
+  { "id": "wallet.contract.deploy_btn", "translation": "Déployer le compte AA" },
+  { "id": "wallet.contract.deploy_hint", "translation": "Déployer le compte AA sur le réseau actuellement sélectionné." }
+
+]

@@ -1,16 +1,15 @@
 package constants
 
 const (
-	AppName            = "quantumauth"
-	ContractFile       = "contract.json"
-	DeviceFileName     = "device_wallet.json"
-	WalletFile         = "wallet.json"
-	ClientIdentityFile = "client_identity.json"
-	AssetsFile         = "assets.json"
-
-	SchemaV1      = 1
-	FilePerm      = 0o600
-	DirectoryPerm = 0o700
+	AppName        = "io.quantumauth.client"
+	ContractFile   = "contract.qa"
+	DeviceFileName = "device_wallet.qa"
+	WalletFile     = "wallet.qa"
+	AssetsFile     = "assets.qa"
+	NetworksFile   = "networks.json"
+	SchemaV1       = 1
+	FilePerm       = 0o600
+	DirectoryPerm  = 0o700
 
 	NativeAddr = "0x0000000000000000000000000000000000000000"
 
@@ -23,5 +22,5 @@ const (
 	// AAD for payload encryption (must match on decrypt).
 	PayloadAAD = "quantumauth:ethdevice:payload:v1"
 
-	NetworksFile = "networks.json"
+	QAHeaderSigVersion = "1"
 )

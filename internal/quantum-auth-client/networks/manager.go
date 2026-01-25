@@ -38,7 +38,6 @@ func NewManager() (*Manager, error) {
 
 func (m *Manager) Path() string { return m.path }
 
-// AddNetwork adds a new network (fails on duplicate name or chainIdHex).
 func (m *Manager) AddNetwork(ctx context.Context, n chains.NetworkConfig) (chains.NetworkConfig, error) {
 	if err := m.ensureLoadedIfExists(ctx); err != nil {
 		return chains.NetworkConfig{}, err
@@ -81,8 +80,6 @@ func (m *Manager) RemoveNetworkByChainIdHex(ctx context.Context, chainIdHex stri
 	return m.persist(ctx)
 }
 
-// UpdateNetworkByChainIdHex updates mutable fields only (keeps name + chain ids stable).
-// If you want renames later, do it explicitly with a Rename API.
 func (m *Manager) UpdateNetworkByChainIdHex(
 	ctx context.Context,
 	chainIdHex string,
@@ -106,7 +103,6 @@ func (m *Manager) UpdateNetworkByChainIdHex(
 		n.EntryPoint = strings.TrimSpace(*patch.EntryPoint)
 	}
 
-	// Backward compat: rpcUrl -> rpcs[0] (only if rpcs not provided)
 	if patch.Rpcs == nil && patch.RpcUrl != nil {
 		url := strings.TrimSpace(*patch.RpcUrl)
 		if url != "" {
@@ -114,12 +110,10 @@ func (m *Manager) UpdateNetworkByChainIdHex(
 		}
 	}
 
-	// New: explicit RPC list (can be empty to clear)
 	if patch.Rpcs != nil {
 		n.RPCs = normalizeRPCs(*patch.Rpcs)
 	}
 
-	// re-normalize invariants
 	n.Name = normalizeNetworkKey(n.Name)
 	n.ChainIDHex = normalizeChainIdHex(n.ChainIDHex)
 
@@ -196,10 +190,6 @@ func (m *Manager) persist(ctx context.Context) error {
 	return securefile.AtomicWriteFile(m.path, b, constants.FilePerm)
 }
 
-// EnsureFromConfig merges config networks into networks.json:
-// - first run: creates file
-// - later runs: adds only missing networks
-// - fills blank explorer/entryPoint/rpcs without overwriting user values
 func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chains.NetworkConfig) error {
 	if err := m.ensureLoadedIfExists(ctx); err != nil {
 		return err
@@ -213,7 +203,6 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chai
 
 	changed := false
 
-	// chainIdHex -> nameKey
 	byChain := map[string]string{}
 	for nameKey, n := range m.store.Networks {
 		if n.ChainIDHex != "" {
@@ -221,7 +210,6 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chai
 		}
 	}
 
-	// defaults key is the network name in config
 	for nameKey, dn := range defaults {
 		if strings.TrimSpace(dn.Name) == "" {
 			dn.Name = nameKey
@@ -232,7 +220,6 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chai
 			continue
 		}
 
-		// match by name first
 		if existing, ok := m.store.Networks[dnNorm.Name]; ok {
 			updated := existing
 
@@ -262,7 +249,6 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chai
 			continue
 		}
 
-		// match by chainIdHex (avoid dup if renamed)
 		if key, ok := byChain[normalizeChainIdHex(dnNorm.ChainIDHex)]; ok {
 			updated := m.store.Networks[key]
 
@@ -291,7 +277,6 @@ func (m *Manager) EnsureFromConfig(ctx context.Context, defaults map[string]chai
 			continue
 		}
 
-		// add
 		m.store.Networks[dnNorm.Name] = dnNorm
 		byChain[normalizeChainIdHex(dnNorm.ChainIDHex)] = dnNorm.Name
 		changed = true
@@ -331,8 +316,7 @@ func (m *Manager) ListFromFile(ctx context.Context) ([]chains.NetworkConfig, err
 	for _, n := range m.store.Networks {
 		out = append(out, n)
 	}
-	// You already sort in List(); reuse if you want:
-	// sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+
 	return out, nil
 }
 

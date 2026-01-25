@@ -28,14 +28,10 @@ type UpdateNetworkReq struct {
 }
 
 type UpdateNetworkPatch struct {
-	Explorer   *string `json:"explorer,omitempty"`
-	EntryPoint *string `json:"entryPoint,omitempty"`
-
-	// New model
-	Rpcs *[]chains.RPC `json:"rpcs,omitempty"`
-
-	// Backward compat (temporary)
-	RpcUrl *string `json:"rpcUrl,omitempty"`
+	Explorer   *string       `json:"explorer,omitempty"`
+	EntryPoint *string       `json:"entryPoint,omitempty"`
+	Rpcs       *[]chains.RPC `json:"rpcs,omitempty"`
+	RpcUrl     *string       `json:"rpcUrl,omitempty"`
 }
 
 type AddNetworkReq struct {

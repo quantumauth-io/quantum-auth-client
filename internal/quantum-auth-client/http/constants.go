@@ -19,6 +19,7 @@ const (
 	JSONKeyPaired            = "paired"
 	JSONKeyAllowed           = "allowed"
 	JSONKeyOrigin            = "origin"
+	JSONKeyAppId             = "appId"
 	JSONKeyHeader            = "header"
 	JSONKeyToken             = "token"
 	JSONKeyChainIDHex        = "chainIdHex"
@@ -78,6 +79,7 @@ const (
 
 // Wallet / RPC messages
 const (
+	DevKeysRuntimeNotInitializedText    = "devkeys runtime not initialized"
 	WalletRuntimeNotInitializedText     = "wallet runtime not initialized"
 	WalletActiveNetworkNotFoundText     = "active network not found"
 	WalletEntryPointNotConfiguredText   = "entryPoint not configured"

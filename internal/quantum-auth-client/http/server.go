@@ -2,62 +2,34 @@ package http
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
-	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind/v2"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/google/uuid"
 	"github.com/quantumauth-io/quantum-auth-client/cmd/quantum-auth-client/config"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/assets"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/chains"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/contractwallet"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/devkeys"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/wtypes"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/login"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/networks"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/pairing"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/runtime"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/services"
-	"github.com/quantumauth-io/quantum-go-utils/log"
-	"github.com/quantumauth-io/quantum-go-utils/qa_evm"
 )
 
 const extensionPairHeader = "X-QA-Extension"
 const agentSessionHeader = "X-QA-Session"
 
-const (
-	ModeNormal   uint8 = 0
-	ModeRecovery uint8 = 1
-)
-
 type Server struct {
-	qaClient        *services.Client
-	authClient      *login.QAClientLoginService
-	mux             *http.ServeMux
-	chainService    *chains.QAChainService
-	httpChainClient qa_evm.BlockchainClient
-
+	qaClient          *services.Client
+	mux               *http.ServeMux
+	identity          runtime.Identity
 	agentSessionToken string
-	uiAllowedOrigins  map[string]struct{}
-
-	perms            *PermissionStore
-	pairingTokenPath string
-
-	pairings        map[string]*Pairing
-	pairingsMu      sync.Mutex
-	ctx             context.Context
-	onChain         *contractwallet.Runtime
-	cfg             *config.Config
-	assetsManager   *assets.Manager
-	cwStore         *contractwallet.Store
-	deployer        *contractwallet.ContractDeployer
-	networksManager *networks.Manager
+	perms             *PermissionStore
+	pairingTokenPath  string
+	pairings          map[string]*Pairing
+	pairingsMu        sync.Mutex
+	ctx               context.Context
+	cfg               *config.Config
+	devKeysManager    devkeys.Manager
+	pairTokenProvider PairTokenProvider
+	web3              Web3Provider
+	devKeys           DevKeysProvider
 }
 
 func (p StaticWalletProvider) UserWallet(ctx context.Context) (wtypes.Wallet, error) {
@@ -67,37 +39,20 @@ func (p StaticWalletProvider) DeviceWallet(ctx context.Context) (wtypes.Wallet, 
 	return p.Device, nil
 }
 
-func (s *Server) activeHTTP(ctx context.Context) (qa_evm.BlockchainClient, error) {
-	return s.chainService.ActiveHTTP(ctx)
-}
-
-func NewServer(ctx context.Context, qaClient *services.Client, authState *login.QAClientLoginService, uiAllowedOrigins []string,
-	chainService *chains.QAChainService, onChain *contractwallet.Runtime, cfg *config.Config, assetsManager *assets.Manager,
-	cwStore *contractwallet.Store, networksManager *networks.Manager) (*Server, error) {
-
-	client, err := chainService.Active()
-	if err != nil {
-		return nil, err
-	}
-
-	httpChainClient := client.HTTP
-	if httpChainClient == nil {
-		return nil, errors.New("no http client provided")
-	}
+func NewServer(ctx context.Context, qaClient *services.Client,
+	cfg *config.Config, identity runtime.Identity, pairTokenProvider PairTokenProvider, web3 Web3Provider,
+	devKeys DevKeysProvider) (*Server, error) {
 
 	s := &Server{
-		ctx:             ctx,
-		qaClient:        qaClient,
-		authClient:      authState,
-		mux:             http.NewServeMux(),
-		pairings:        make(map[string]*Pairing),
-		chainService:    chainService,
-		httpChainClient: httpChainClient,
-		onChain:         onChain,
-		cfg:             cfg,
-		assetsManager:   assetsManager,
-		cwStore:         cwStore,
-		networksManager: networksManager,
+		ctx:               ctx,
+		qaClient:          qaClient,
+		mux:               http.NewServeMux(),
+		pairings:          make(map[string]*Pairing),
+		cfg:               cfg,
+		identity:          identity,
+		pairTokenProvider: pairTokenProvider,
+		web3:              web3,
+		devKeys:           devKeys,
 	}
 
 	// ---- init allowlist storage ----
@@ -109,49 +64,6 @@ func NewServer(ctx context.Context, qaClient *services.Client, authState *login.
 	if err := s.perms.Load(); err != nil {
 		return nil, err
 	}
-
-	// ---- init pairing token path ----
-	ptPath, err := pairingTokenFilePath()
-	if err != nil {
-		return nil, err
-	}
-	s.pairingTokenPath = ptPath
-
-	// Agent Token and Allowed Origin
-	token, err := newSessionToken()
-	if err != nil {
-		return nil, err
-	}
-	s.agentSessionToken = token
-	s.uiAllowedOrigins = make(map[string]struct{}, len(uiAllowedOrigins))
-	for _, o := range uiAllowedOrigins {
-		o = normalizeOrigin(o)
-		if o == "" {
-			continue
-		}
-		s.uiAllowedOrigins[o] = struct{}{}
-	}
-	// CORS for local UI (Vite) but no token required
-	localUICors := corsPolicy{
-		allowedOrigins: s.uiAllowedOrigins,
-		allowMethods:   "GET,OPTIONS",
-		allowHeaders:   "", // echo requested
-		maxAge:         600,
-	}
-
-	pairCors := corsPolicy{
-		allowedOrigins: s.uiAllowedOrigins,
-		allowMethods:   "POST,OPTIONS",
-		allowHeaders:   "", // echo
-		maxAge:         600,
-	}
-
-	// Agent UI Endpoint
-	s.mux.HandleFunc("/healthz", s.withCORS(localUICors, s.withLoopbackOnly(s.handleHealthHTTP)))
-	s.mux.HandleFunc("/status", s.withCORS(localUICors, s.withLoopbackOnly(s.handleStatusHTTP)))
-
-	// initial load of agent UI
-	s.mux.HandleFunc("/pair/exchange", s.withCORS(pairCors, s.withLoopbackOnly(s.handleTokenPairHTTP)))
 
 	// agent pairing and status
 	s.mux.HandleFunc("/agent/extension/pair", s.withAgentGuards(s.handleAgentExtensionPairHTTP))
@@ -193,143 +105,101 @@ func NewServer(ctx context.Context, qaClient *services.Client, authState *login.
 
 	s.mux.HandleFunc("/wallet/deployAA", s.withExtensionPairedGuards(s.handleDeployContractOnChainHTTP))
 
-	// agent-only endpoints (UI)
-	s.mux.HandleFunc("/agent/status", s.withAgentGuards(s.handleAgentStatusHTTP))
-	s.mux.HandleFunc("/agent/guardian/sign-register", s.withAgentGuards(s.handleAgentSignRegisterHTTP))
-	s.mux.HandleFunc("/agent/guardian/sign-withdraw", s.withAgentGuards(s.handleAgentSignWithdrawHTTP))
+	// Developer PQ keys (extension)
+	s.mux.HandleFunc("/extension/developer/key/list", s.withExtensionPairedGuards(s.handleDevKeyListHTTP))
+	s.mux.HandleFunc("/extension/developer/key/create", s.withExtensionPairedGuards(s.handleDevKeyCreateHTTP))
+	s.mux.HandleFunc("/extension/developer/key/update", s.withExtensionPairedGuards(s.handleDevKeyUpdateHTTP))
+	s.mux.HandleFunc("/extension/developer/key/delete", s.withExtensionPairedGuards(s.handleDevKeyDeleteHTTP))
+	s.mux.HandleFunc("/extension/developer/key/export", s.withExtensionPairedGuards(s.handleDeveloperKeyExportHTTP))
 
-	// generate a pair code for the extension
-	pairID := uuid.NewString()
-	pairCode, err := pairing.GeneratePairCode()
-	if err != nil {
-		return nil, err
-	}
-
-	s.pairingsMu.Lock()
-	s.pairings[pairID] = &Pairing{
-		CodeHash:  pairing.HashCode(pairCode),
-		ExpiresAt: time.Now().Add(60 * time.Second),
-		Token:     s.agentSessionToken,
-	}
-	s.pairingsMu.Unlock()
-
-	pairURL := fmt.Sprintf(
-		"http://127.0.0.1:6137/#/?server=%s&pair_id=%s&code=%s",
-		url.QueryEscape("http://127.0.0.1:6137"),
-		url.QueryEscape(pairID),
-		url.QueryEscape(pairCode),
-	)
-
-	log.Info("pair with agent UI", "url", pairURL)
-	// attach UI LAST
-	if err = s.AttachUI(); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
-// ServeHTTP implements http.Handler
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-func (s *Server) relayerAuth(ctx context.Context) (*bind.TransactOpts, common.Address, error) {
-	privKey, err := s.onChain.User.ExportPrivateKey(ctx)
+// require providers
+func (s *Server) requireWeb3(w http.ResponseWriter, r *http.Request) (Web3Snapshot, bool) {
+	if s.web3 == nil {
+		writeRPCError(w, http.StatusServiceUnavailable, JSONRPCErrorCodeInternalError, WalletRuntimeNotInitializedText, nil)
+		return Web3Snapshot{}, false
+	}
+
+	snap, ok, err := s.web3.SnapshotWeb3(r.Context())
 	if err != nil {
-		return nil, common.Address{}, err
+		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, "web3 provider error", err.Error())
+		return Web3Snapshot{}, false
 	}
-	if privKey == nil {
-		return nil, common.Address{}, fmt.Errorf("exported private key is nil")
-	}
-
-	from := crypto.PubkeyToAddress(privKey.PublicKey)
-
-	client, err := s.chainService.Active()
-	if err != nil {
-		return nil, common.Address{}, err
+	if !ok {
+		// not created / not unlocked / missing runtime
+		writeRPCError(w, http.StatusServiceUnavailable, JSONRPCErrorCodeInternalError, WalletRuntimeNotInitializedText, nil)
+		return Web3Snapshot{}, false
 	}
 
-	chainID, err := client.HTTP.ChainID(ctx)
-
-	auth := &bind.TransactOpts{
-		From:    from,
-		Context: ctx,
-		Signer: func(addr common.Address, tx *types.Transaction) (*types.Transaction, error) {
-			if addr != from {
-				return nil, fmt.Errorf("unauthorized signer: %s", addr.Hex())
-			}
-			return types.SignTx(tx, types.LatestSignerForChainID(chainID), privKey)
-		},
+	// extra sanity checks (optional but recommended)
+	if snap.Chains == nil {
+		writeRPCError(w, http.StatusServiceUnavailable, JSONRPCErrorCodeInternalError, "chains not initialized", nil)
+		return Web3Snapshot{}, false
 	}
-
-	return auth, from, nil
+	if snap.Networks == nil {
+		writeRPCError(w, http.StatusServiceUnavailable, JSONRPCErrorCodeInternalError, "networks manager not initialized", nil)
+		return Web3Snapshot{}, false
+	}
+	return snap, true
 }
 
-func (s *Server) signUserOpHash(ctx context.Context, userOpHash []byte) ([]byte, error) {
-	if len(userOpHash) != 32 {
-		return nil, fmt.Errorf("userOpHash must be 32 bytes")
+func (s *Server) requireDevKeys(w http.ResponseWriter, r *http.Request) (DevKeysSnapshot, bool) {
+	if s.devKeys == nil {
+		writeRPCError(
+			w,
+			http.StatusServiceUnavailable,
+			JSONRPCErrorCodeInternalError,
+			DevKeysRuntimeNotInitializedText,
+			nil,
+		)
+		return DevKeysSnapshot{}, false
 	}
 
-	// --- TPM signs RAW userOpHash ---
-	sigTPM, err := s.onChain.Device.SignHash(ctx, userOpHash)
+	snap, ok, err := s.devKeys.SnapshotDevKeys(r.Context())
 	if err != nil {
-		return nil, fmt.Errorf("tpm sign failed: %w", err)
+		writeRPCError(
+			w,
+			http.StatusInternalServerError,
+			JSONRPCErrorCodeInternalError,
+			"devkeys provider error",
+			err.Error(),
+		)
+		return DevKeysSnapshot{}, false
+	}
+	if !ok {
+		// locked / not setup / missing runtime
+		writeRPCError(
+			w,
+			http.StatusServiceUnavailable,
+			JSONRPCErrorCodeInternalError,
+			DevKeysRuntimeNotInitializedText,
+			nil,
+		)
+		return DevKeysSnapshot{}, false
 	}
 
-	// --- EOAs sign ETH-SIGNED hash ---
-	ethHash := ethSignedHash(userOpHash)
-
-	var sigEOA1, sigEOA2 []byte
-
-	// You decide which EOA is active; example uses EOA1
-	sigEOA1, err = s.onChain.User.SignHash(ctx, ethHash)
-	if err != nil {
-		return nil, fmt.Errorf("eoa1 sign failed: %w", err)
+	// extra sanity checks
+	if snap.Manager == nil {
+		writeRPCError(
+			w,
+			http.StatusServiceUnavailable,
+			JSONRPCErrorCodeInternalError,
+			"devkeys manager not initialized",
+			nil,
+		)
+		return DevKeysSnapshot{}, false
 	}
 
-	// Not used in MODE_NORMAL
-	sigEOA2 = []byte{}
-
-	// Normalize V if needed (OpenZeppelin expects 27/28)
-	if sigEOA1[64] < 27 {
-		sigEOA1[64] += 27
-	}
-
-	return packQuantumAuthSignature(
-		ModeNormal,
-		sigEOA1,
-		sigEOA2,
-		sigTPM,
-	)
+	return snap, true
 }
 
-func ethSignedHash(h []byte) []byte {
-	prefix := []byte("\x19Ethereum Signed Message:\n32")
-	return crypto.Keccak256(prefix, h)
-}
-
-func packQuantumAuthSignature(
-	mode uint8,
-	sigEOA1 []byte,
-	sigEOA2 []byte,
-	sigTPM []byte,
-) ([]byte, error) {
-
-	args := abi.Arguments{
-		{Type: abi.Type{T: abi.UintTy, Size: 8}}, // uint8
-		{Type: abi.Type{T: abi.BytesTy}},         // bytes
-		{Type: abi.Type{T: abi.BytesTy}},         // bytes
-		{Type: abi.Type{T: abi.BytesTy}},         // bytes
-	}
-
-	return args.Pack(
-		mode,
-		sigEOA1,
-		sigEOA2,
-		sigTPM,
-	)
-}
-
+// handlers
 func (s *Server) handleAgentExtensionStatusHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodGet, s.handleAgentExtensionStatus)(w, r)
 }
@@ -338,74 +208,73 @@ func (s *Server) handleWalletChainIdHTTP(w http.ResponseWriter, r *http.Request)
 	requireMethod(http.MethodPost, s.handleWalletChainId)(w, r)
 }
 
-func (s *Server) handleStatusHTTP(w http.ResponseWriter, r *http.Request) {
-	requireMethod(http.MethodGet, s.handleStatus)(w, r)
-}
 func (s *Server) handleAgentSessionValidateHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodGet, s.handleAgentSessionValidate)(w, r)
 }
+
 func (s *Server) handleAgentExtensionPairHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleAgentExtensionPair)(w, r)
 }
-func (s *Server) handleAgentStatusHTTP(w http.ResponseWriter, r *http.Request) {
-	requireMethod(http.MethodGet, s.handleAgentStatus)(w, r)
-}
-func (s *Server) handleAgentSignRegisterHTTP(w http.ResponseWriter, r *http.Request) {
-	requireMethod(http.MethodPost, s.handleAgentSignRegister)(w, r)
-}
-func (s *Server) handleAgentSignWithdrawHTTP(w http.ResponseWriter, r *http.Request) {
-	requireMethod(http.MethodPost, s.handleAgentSignWithdraw)(w, r)
-}
-func (s *Server) handleHealthHTTP(w http.ResponseWriter, r *http.Request) {
-	requireMethod(http.MethodGet, s.handleHealth)(w, r)
-}
+
 func (s *Server) handleExtensionAuthHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleExtensionAuth)(w, r)
 }
+
 func (s *Server) handleGetPermissionsHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodGet, s.handleGetPermissions)(w, r)
 }
+
 func (s *Server) handleGetPermissionStatusHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodGet, s.handleGetPermissionStatus)(w, r)
 }
+
 func (s *Server) handleSetPermissionHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleSetPermission)(w, r)
 }
+
 func (s *Server) handleTokenPairHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleTokenPair)(w, r)
 }
+
 func (s *Server) handleTransactionReceiptHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleTransactionReceipt)(w, r)
 }
 
-// RPC-style endpoints (JSON-RPC errors on method mismatch)
 func (s *Server) handleWalletAccountsHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletAccounts)(w, r)
 }
+
 func (s *Server) handleWalletSwitchChainHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletSwitchChain)(w, r)
 }
+
 func (s *Server) handleWalletSendTransactionHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletSendTransaction)(w, r)
 }
+
 func (s *Server) handleWalletEstimateSendTransactionHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletEstimateSendTransaction)(w, r)
 }
+
 func (s *Server) handleWalletPersonalSignHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletPersonalSign)(w, r)
 }
+
 func (s *Server) handleWalletSignTypedDataV4HTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletSignTypedDataV4)(w, r)
 }
+
 func (s *Server) handleWalletRPCHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodPost, s.handleWalletRPC)(w, r)
 }
+
 func (s *Server) handleWalletAccountsSummaryHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethodRPC(http.MethodGet, s.handleWalletAccountsSummary)(w, r)
 }
 func (s *Server) handleWalletNetworksHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodGet, s.handleWalletNetworks)(w, r)
 }
+
 func (s *Server) handleWalletSetNetworkHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleWalletSetNetwork)(w, r)
 }
@@ -444,4 +313,24 @@ func (s *Server) handleWalletRemoveAssetHTTP(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleWalletAssetMetadataHTTP(w http.ResponseWriter, r *http.Request) {
 	requireMethod(http.MethodPost, s.handleWalletAssetMetadata)(w, r)
+}
+
+func (s *Server) handleDevKeyListHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodGet, s.handleDevKeyList)(w, r)
+}
+
+func (s *Server) handleDevKeyCreateHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleDevKeyCreate)(w, r)
+}
+
+func (s *Server) handleDevKeyUpdateHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleDevKeyUpdate)(w, r)
+}
+
+func (s *Server) handleDevKeyDeleteHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleDevKeyDelete)(w, r)
+}
+
+func (s *Server) handleDeveloperKeyExportHTTP(w http.ResponseWriter, r *http.Request) {
+	requireMethod(http.MethodPost, s.handleDeveloperKeyExport)(w, r)
 }

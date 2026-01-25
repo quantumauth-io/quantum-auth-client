@@ -104,7 +104,6 @@ func (m *Manager) detectEntryPointV080(ctx context.Context, rpcURL string) (stri
 }
 
 func (m *Manager) EnrichByChain(ctx context.Context, meta shared.NetworkMetadataOut) shared.NetworkMetadataOut {
-	// 1) if in networks.json already, use it
 	if strings.TrimSpace(meta.ChainIdHex) != "" {
 		if n, found, _ := m.FindByChainIdHex(ctx, meta.ChainIdHex); found {
 			if meta.Name == "" {
@@ -119,7 +118,6 @@ func (m *Manager) EnrichByChain(ctx context.Context, meta shared.NetworkMetadata
 		}
 	}
 
-	// 2) fallback to built-in mapping
 	if meta.Name == "" || meta.Explorer == "" {
 		if d, ok := chainDefaults[strings.ToLower(meta.ChainIdHex)]; ok {
 			if meta.Name == "" {
@@ -131,13 +129,11 @@ func (m *Manager) EnrichByChain(ctx context.Context, meta shared.NetworkMetadata
 		}
 	}
 
-	// 3) detect entrypoint v0.8.0 by checking code on-chain
 	if meta.EntryPoint == "" && strings.TrimSpace(meta.RpcUrl) != "" {
 		if ep, ok, err := m.detectEntryPointV080(ctx, meta.RpcUrl); err == nil && ok {
 			meta.EntryPoint = ep
 		}
-		// If err != nil, we silently ignore here so the UI can still fill chainId/name/explorer.
-		// If you prefer surfacing errors, return it in metadata handler instead.
+
 	}
 
 	return meta

@@ -23,14 +23,12 @@ type Manager struct {
 	fetchDelay    time.Duration
 }
 
-// NewManager resolves assets.json path using securefile.ConfigPathCandidates.
-// It picks the first existing candidate, else the first candidate as the target path.
 func NewManager(chainsService *chains.QAChainService) (*Manager, error) {
 	if strings.TrimSpace(constants.AppName) == "" {
 		return nil, fmt.Errorf("appName must not be empty")
 	}
 
-	path, err := resolveAssetsPath(constants.AppName)
+	path, err := resolveAssetsPath()
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +45,6 @@ func NewManager(chainsService *chains.QAChainService) (*Manager, error) {
 	return m, nil
 }
 
-// Path returns the resolved assets.json path.
 func (m *Manager) Path() string { return m.path }
 
 func (m *Manager) EnsureStore(ctx context.Context, defaults map[string][]string) error {
@@ -88,9 +85,8 @@ func (m *Manager) EnsureStore(ctx context.Context, defaults map[string][]string)
 	return m.persist(ctx)
 }
 
-// Load reads assets.json into memory (plain JSON).
 func (m *Manager) Load(ctx context.Context) error {
-	_ = ctx // reserved if you later want context-aware IO
+	_ = ctx
 
 	b, err := os.ReadFile(m.path)
 	if err != nil {
@@ -108,7 +104,6 @@ func (m *Manager) Load(ctx context.Context) error {
 		s.Networks = map[string]map[string]Asset{}
 	}
 
-	// normalize network keys + addresses on load (defensive)
 	normalized := Store{Schema: s.Schema, Networks: map[string]map[string]Asset{}}
 	for netKey, byAddr := range s.Networks {
 		nk := normalizeNetworkKey(netKey)
@@ -139,7 +134,6 @@ func (m *Manager) EnsureStoreForNetwork(ctx context.Context, network string, def
 		return fmt.Errorf("network must not be empty")
 	}
 
-	// Load if exists (don’t overwrite user-added assets)
 	if exists(m.path) {
 		if err := m.Load(ctx); err != nil {
 			return err
@@ -297,15 +291,14 @@ func (m *Manager) RemoveAsset(ctx context.Context, network string, address strin
 }
 
 func (m *Manager) ensureLoadedIfExists(ctx context.Context) error {
-	// if we already have something loaded, skip
 	if m.store.Networks != nil && len(m.store.Networks) > 0 {
 		return nil
 	}
 	if exists(m.path) {
 		return m.Load(ctx)
 	}
-	// no file yet => keep empty store
 	m.store = Store{Schema: constants.SchemaV1, Networks: map[string]map[string]Asset{}}
+
 	return nil
 }
 
@@ -321,12 +314,11 @@ func (m *Manager) persist(ctx context.Context) error {
 		return fmt.Errorf("marshal assets store: %w", err)
 	}
 
-	// atomic write via your securefile package
 	return securefile.AtomicWriteFile(m.path, b, constants.FilePerm)
 }
 
-func resolveAssetsPath(appName string) (string, error) {
-	cands, err := securefile.ConfigPathCandidates(appName, constants.AssetsFile)
+func resolveAssetsPath() (string, error) {
+	cands, err := securefile.ConfigPathCandidates(constants.AppName, constants.AssetsFile)
 	if err != nil {
 		return "", err
 	}
@@ -352,7 +344,6 @@ func normalizeNetworkKey(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// normalizeAddress => checksummed canonical form
 func normalizeAddress(addr string) (string, error) {
 	a := strings.TrimSpace(addr)
 	if a == "" {

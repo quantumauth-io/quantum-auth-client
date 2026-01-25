@@ -9,7 +9,7 @@ import (
 
 type Store struct {
 	Schema   int                             `json:"schema"`
-	Networks map[string]chains.NetworkConfig `json:"networks"` // key = normalized name
+	Networks map[string]chains.NetworkConfig `json:"networks"`
 }
 
 type rpcReq struct {

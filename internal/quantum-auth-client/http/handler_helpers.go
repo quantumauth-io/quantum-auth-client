@@ -46,28 +46,14 @@ func decodeJSONBodyRPC(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-// Simple boolean guards to reduce repetitive nil checks.
-// Keep them tiny: they only check + write the error.
-func requireEthClient(w http.ResponseWriter, s *Server) bool {
-	if s.httpChainClient == nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: WalletEthClientNotInitializedText})
-		return false
-	}
-	return true
-}
-
-func requireWalletRuntime(w http.ResponseWriter, s *Server) bool {
-	if s.onChain == nil || s.onChain.User == nil || s.onChain.Device == nil {
-		writeRPCError(w, http.StatusInternalServerError, JSONRPCErrorCodeInternalError, WalletRuntimeNotInitializedText, nil)
-		return false
-	}
-	return true
-}
-
 func requireAuthState(w http.ResponseWriter, s *Server) bool {
-	if s.authClient == nil || s.authClient.State == nil {
-		writeJSON(w, http.StatusInternalServerError, extensionResponse{OK: false, Error: "auth state not initialised"})
-		return false
+
+	userID := s.identity.UserID
+	deviceID := s.identity.DeviceID
+	if userID == "" || deviceID == "" {
+		http.Error(w, "device not registered", http.StatusPreconditionRequired)
+		writeJSON(w, http.StatusPreconditionRequired, extensionResponse{OK: false, Error: "auth state not initialised"})
 	}
+
 	return true
 }

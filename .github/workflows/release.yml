@@ -30,3 +30,15 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export release tag
+        run: |
+          set -euo pipefail
+          echo "${GITHUB_REF_NAME}" > release-tag.txt
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: release-tag.txt
+          retention-days: 7

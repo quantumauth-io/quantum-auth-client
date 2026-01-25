@@ -84,16 +84,16 @@ func (ps *PermissionStore) Save() error {
 }
 
 // IsAllowed checks whether an origin is allowed.
-func (ps *PermissionStore) IsAllowed(origin string) bool {
+func (ps *PermissionStore) IsAllowed(appId string) bool {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
-	return ps.allowed[origin]
+	return ps.allowed[appId]
 }
 
 // Set updates permission for an origin and persists it.
-func (ps *PermissionStore) Set(origin string, allowed bool) error {
+func (ps *PermissionStore) Set(appId string, allowed bool) error {
 	ps.mu.Lock()
-	ps.allowed[origin] = allowed
+	ps.allowed[appId] = allowed
 	ps.mu.Unlock()
 
 	if err := ps.Save(); err != nil {

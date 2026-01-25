@@ -1,5 +1,3 @@
-// Package securefile provides encrypted JSON file read/write with atomic writes.
-// Uses Argon2id for KDF and XChaCha20-Poly1305 for AEAD.
 package securefile
 
 import (
@@ -13,19 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/quantumauth-io/quantum-go-utils/log"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
 var (
-	// ErrInvalidPasswordOrCorrupt is returned when decryption fails.
-	// Keep this generic to avoid leaking details.
 	ErrInvalidPasswordOrCorrupt = errors.New("invalid password or corrupted file")
 )
 
-// KDFParams describes the on-disk encryption envelope.
-// NOTE: now supports both password-derived and TPM-derived keys.
 type KDFParams struct {
 	Version int    `json:"version"`
 	Mode    string `json:"mode,omitempty"` // "password" (default) or "tpm"
@@ -54,7 +47,6 @@ var DefaultKDF = KDFParams{
 	ArgonKeyLen:  32,
 }
 
-// Options controls encryption behavior.
 type Options struct {
 	KDF KDFParams
 
@@ -64,44 +56,13 @@ type Options struct {
 	AADFunc func(path string) []byte
 
 	// TPM support (optional)
-	TPMSealer TPMSealer // interface; keep securefile independent from tpmdevice package
-	TPMLabel  string    // used to scope the sealed DEK
+	TPMSealer TPMSealer
+	TPMLabel  string
 }
 
-// TPMSealer is implemented by  tpmdevice.Sealer.
 type TPMSealer interface {
 	Seal(ctx context.Context, label string, secret []byte) ([]byte, error)
 	Unseal(ctx context.Context, label string, blob []byte) ([]byte, error)
-}
-
-// ReadEncryptedJSONAuto tries TPM first, then falls back to password with warning.
-func ReadEncryptedJSONAuto[T any](ctx context.Context, path string, password []byte, opt ...Options) (T, error) {
-	o := mergeOptions(opt...)
-
-	if o.TPMSealer != nil && o.TPMLabel != "" {
-		out, err := ReadTPMEncryptedJSON[T](ctx, path, o)
-		if err == nil {
-			return out, nil
-		}
-		log.Warn("securefile: TPM decrypt failed, falling back to password mode", "error", err)
-	}
-
-	return ReadEncryptedJSON[T](path, password, o)
-}
-
-// WriteEncryptedJSONAuto prefers TPM; falls back to password with warning.
-func WriteEncryptedJSONAuto[T any](ctx context.Context, path string, v T, password []byte, opt ...Options) error {
-	o := mergeOptions(opt...)
-
-	if o.TPMSealer != nil && o.TPMLabel != "" {
-		if err := WriteTPMEncryptedJSON[T](ctx, path, v, o); err == nil {
-			return nil
-		} else {
-			log.Warn("securefile: TPM encrypt failed, falling back to password mode", "error", err)
-		}
-	}
-
-	return WriteEncryptedJSON[T](path, v, password, o)
 }
 
 func defaultOptions() Options {
@@ -113,7 +74,6 @@ func defaultOptions() Options {
 	}
 }
 
-// WriteEncryptedJSON MODE PASSWORD
 func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options) error {
 	o := mergeOptions(opt...)
 
@@ -141,7 +101,6 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 		return fmt.Errorf("unsupported kdf version: %d", ver)
 	}
 
-	// salt
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return fmt.Errorf("rand salt: %w", err)
@@ -191,7 +150,6 @@ func WriteEncryptedJSON[T any](path string, v T, password []byte, opt ...Options
 	return atomicWriteFile(path, b, o.FilePerm)
 }
 
-// WriteTPMEncryptedJSON MODE TPM
 func WriteTPMEncryptedJSON[T any](ctx context.Context, path string, v T, opt ...Options) error {
 	o := mergeOptions(opt...)
 	if o.TPMSealer == nil {
@@ -255,7 +213,6 @@ func WriteTPMEncryptedJSON[T any](ctx context.Context, path string, v T, opt ...
 	return atomicWriteFile(path, b, o.FilePerm)
 }
 
-// ReadEncryptedJSON MODE PASSWORD
 func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, error) {
 
 	var zero T
@@ -326,7 +283,6 @@ func ReadEncryptedJSON[T any](path string, password []byte, opt ...Options) (T, 
 	return out, nil
 }
 
-// ReadTPMEncryptedJSON MODE TPM
 func ReadTPMEncryptedJSON[T any](ctx context.Context, path string, opt ...Options) (T, error) {
 	var zero T
 	o := mergeOptions(opt...)
@@ -396,13 +352,10 @@ func ReadTPMEncryptedJSON[T any](ctx context.Context, path string, opt ...Option
 	return out, nil
 }
 
-// AtomicWriteFile MODE PLAN TEXT (NOT ENCRYPTED)
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm)
 }
 
-// ConfigPathCandidates returns config paths to try, in priority order.
-// Uses QA_ENV to optionally add a subfolder: local/ or develop/.
 func ConfigPathCandidates(app, filename string) ([]string, error) {
 	envFolder, err := QaEnvFolder()
 	if err != nil {
@@ -411,37 +364,6 @@ func ConfigPathCandidates(app, filename string) ([]string, error) {
 	return configPathCandidatesForEnvFolder(app, filename, envFolder)
 }
 
-// WriteJSON marshals v as pretty JSON and writes it atomically to path.
-// Creates parent directories using permDir.
-func WriteJSON[T any](path string, v T, permFile, permDir os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), permDir); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal json: %w", err)
-	}
-
-	return AtomicWriteFile(path, b, permFile)
-}
-
-// ReadJSON reads and unmarshals JSON from path into T.
-func ReadJSON[T any](path string) (T, error) {
-	var zero T
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return zero, fmt.Errorf("read file: %w", err)
-	}
-	var out T
-	if err := json.Unmarshal(b, &out); err != nil {
-		return zero, fmt.Errorf("unmarshal json: %w", err)
-	}
-	return out, nil
-}
-
-// configPathCandidatesForEnvFolder builds candidates for a specific envFolder.
-// envFolder == "" means production layout (no subfolder).
 func configPathCandidatesForEnvFolder(app, filename, envFolder string) ([]string, error) {
 	if app == "" {
 		return nil, errors.New("app must not be empty")
@@ -460,37 +382,32 @@ func configPathCandidatesForEnvFolder(app, filename, envFolder string) ([]string
 		paths = append(paths, p)
 	}
 
-	joinHomeStyle := func(homeLike string) string {
-		// <home>/.config/<app>/<env?>/<filename>
-		dir := filepath.Join(homeLike, ".config", app)
+	joinBase := func(base string) string {
+		// base is either a config root (UserConfigDir) or a snap data dir
+		dir := filepath.Join(base, app)
 		if envFolder != "" {
 			dir = filepath.Join(dir, envFolder)
 		}
 		return filepath.Join(dir, filename)
 	}
 
-	// 1) SNAP_REAL_HOME
-	if realHome := os.Getenv("SNAP_REAL_HOME"); realHome != "" {
-		add(joinHomeStyle(realHome))
+	// ✅ Snap: use snap-managed writable dirs (no personal-files needed)
+	if snapCommon := os.Getenv("SNAP_USER_COMMON"); snapCommon != "" {
+		add(joinBase(snapCommon))
+		return paths, nil
+	}
+	if snapData := os.Getenv("SNAP_USER_DATA"); snapData != "" {
+		add(joinBase(snapData))
+		return paths, nil
 	}
 
-	// 2) HOME
-	if home := os.Getenv("HOME"); home != "" {
-		add(joinHomeStyle(home))
-	}
-
-	// 3) UserConfigDir fallback: <UserConfigDir>/<app>/<env?>/<filename>
+	// ✅ Non-snap: normal OS config dir
 	if dir, err := os.UserConfigDir(); err == nil {
-		baseDir := filepath.Join(dir, app)
-		if envFolder != "" {
-			baseDir = filepath.Join(baseDir, envFolder)
-		}
-		add(filepath.Join(baseDir, filename))
-	} else if len(paths) == 0 {
+		add(joinBase(dir))
+		return paths, nil
+	} else {
 		return nil, fmt.Errorf("UserConfigDir: %w", err)
 	}
-
-	return paths, nil
 }
 
 func mergeOptions(opt ...Options) Options {
@@ -500,12 +417,10 @@ func mergeOptions(opt ...Options) Options {
 	}
 	in := opt[0]
 
-	// KDF
 	if in.KDF.Version != 0 {
 		o.KDF = in.KDF
 	}
 
-	// perms
 	if in.FilePerm != 0 {
 		o.FilePerm = in.FilePerm
 	}
@@ -513,12 +428,10 @@ func mergeOptions(opt ...Options) Options {
 		o.DirectoryPerm = in.DirectoryPerm
 	}
 
-	// aad
 	if in.AADFunc != nil {
 		o.AADFunc = in.AADFunc
 	}
 
-	// TPM
 	if in.TPMSealer != nil {
 		o.TPMSealer = in.TPMSealer
 	}
@@ -532,7 +445,6 @@ func mergeOptions(opt ...Options) Options {
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
 
-	// Best effort cleanup if something already exists.
 	_ = os.Remove(tmp)
 
 	if err := os.WriteFile(tmp, data, perm); err != nil {

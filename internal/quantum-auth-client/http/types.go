@@ -27,12 +27,12 @@ type qaChallengeRequest struct {
 	Method      string `json:"method"`
 	Path        string `json:"path"`
 	BackendHost string `json:"backendHost"`
-	AppID       string `json:"appId,omitempty"`
-	Origin      string `json:"origin"` // NEW: required for allowlist enforcement
+	AppID       string `json:"appId"`
+	BodyB64     string `json:"bodyB64,omitempty"`
 }
 
 type setPermissionRequest struct {
-	Origin  string `json:"origin"`
+	AppId   string `json:"appId"`
 	Allowed bool   `json:"allowed"`
 }
 
@@ -245,4 +245,35 @@ type assetMetadataReq struct {
 	ChainIdHex  string `json:"chainIdHex"`
 	Address     string `json:"address"`
 	NetworkName string `json:"networkName"`
+}
+
+type devKeyListItem struct {
+	ID          string `json:"id"`
+	AppName     string `json:"appName"`
+	AppID       string `json:"appId"`
+	PQPublicKey string `json:"pqPublicKey"`
+	CreatedAt   string `json:"createdAt,omitempty"` // ISO8601 string, optional
+}
+
+type devKeyCreateReq struct {
+	AppID   string `json:"appId"`
+	AppName string `json:"appName"`
+}
+
+type devKeyUpdateReq struct {
+	AppID string         `json:"appId"`
+	Patch devKeyPatchReq `json:"patch"`
+}
+
+type devKeyPatchReq struct {
+	AppName *string `json:"appName,omitempty"`
+}
+
+type devKeyDeleteReq struct {
+	AppID string `json:"appId"`
+}
+
+type developerKeyExportReq struct {
+	AppID   string `json:"appId"`
+	Confirm bool   `json:"confirm"`
 }

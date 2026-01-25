@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/chains"
@@ -29,67 +30,39 @@ type Config struct {
 	DefaultAssets  DefaultAssetsConfig     `yaml:"DefaultAssets" json:"defaultAssets"`
 }
 
+var (
+	loadOnce sync.Once
+	baseCfg  *Config
+	loadErr  error
+)
+
 func infuraRPC(chain string, key string) (string, string) {
 	return fmt.Sprintf("https://%s.infura.io/v3/%s", chain, key),
 		fmt.Sprintf("wss://%s.infura.io/ws/v3/%s", chain, key)
 }
 
 func Load() (*Config, error) {
+	loadOnce.Do(func() {
+		baseCfg, loadErr = loadImpl()
+	})
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	if baseCfg == nil {
+		return nil, fmt.Errorf("config: nil base config")
+	}
+	return baseCfg.Clone(), nil
+}
+
+// existing Load body goes here
+func loadImpl() (*Config, error) {
 	home, _ := os.UserHomeDir()
 	paths := []string{
 		filepath.Join(home, ".config", "quantum-auth-client"),
 		filepath.Join(home, "config"),
 		".",
 	}
-
 	return utilsconfig.ParseConfigWithEmbedded[Config](paths, EmbeddedConfigYAML)
-}
-
-func (c *Config) GetChainConfigByName(networkName string) (chains.ResolvedChain, error) {
-	networkName = strings.TrimSpace(networkName)
-	if networkName == "" {
-		return chains.ResolvedChain{}, errors.New("network name is empty")
-	}
-
-	net, ok := c.Networks.Networks[networkName]
-	if !ok {
-		return chains.ResolvedChain{}, fmt.Errorf("unknown network %q", networkName)
-	}
-
-	// pick RPC
-	var rpc *chains.RPC
-	if want := strings.TrimSpace(c.Networks.ActiveRPC); want != "" {
-		for i := range net.RPCs {
-			if strings.EqualFold(strings.TrimSpace(net.RPCs[i].Name), want) {
-				rpc = &net.RPCs[i]
-				break
-			}
-		}
-	}
-	if rpc == nil {
-		if len(net.RPCs) == 0 {
-			return chains.ResolvedChain{}, fmt.Errorf("network %q has no RPCs configured", networkName)
-		}
-		rpc = &net.RPCs[0]
-	}
-
-	if strings.TrimSpace(rpc.URL) == "" {
-		return chains.ResolvedChain{}, fmt.Errorf("network %q rpc %q url is empty", networkName, rpc.Name)
-	}
-	if strings.TrimSpace(rpc.WSS) == "" {
-		return chains.ResolvedChain{}, fmt.Errorf("network %q rpc %q wss is empty", networkName, rpc.Name)
-	}
-
-	return chains.ResolvedChain{
-		NetworkName: networkName,
-		ChainID:     uint64(net.ChainID),
-		ChainIDHex:  net.ChainIDHex,
-		EntryPoint:  net.EntryPoint,
-		Explorer:    net.Explorer,
-		RPCName:     rpc.Name,
-		URL:         rpc.URL,
-		WSS:         rpc.WSS,
-	}, nil
 }
 
 func (c *Config) InjectInfuraKey(key string) error {
@@ -124,15 +97,11 @@ func (c *Config) InjectInfuraKey(key string) error {
 	return nil
 }
 
-func (c *Config) ApplyServerURLFromEnv() error {
-	raw := strings.TrimSpace(os.Getenv("QA_ENV"))
+func (c *Config) ApplyServerURLFromQAEnv(env string) error {
+	raw := strings.TrimSpace(env)
 
 	switch strings.ToLower(raw) {
-	case "":
-		// prod default
-		c.ClientSettings.ServerURL = "https://api.quantumauth.io/quantum-auth/v1"
-
-	case "prod", "production":
+	case "", "prod", "production":
 		c.ClientSettings.ServerURL = "https://api.quantumauth.io/quantum-auth/v1"
 
 	case "local":
@@ -142,7 +111,7 @@ func (c *Config) ApplyServerURLFromEnv() error {
 		c.ClientSettings.ServerURL = "https://dev.api.quantumauth.io/quantum-auth/v1"
 
 	default:
-		return fmt.Errorf("invalid QA_ENV %q (allowed: local, develop, empty)", raw)
+		return fmt.Errorf("invalid QA environment %q", raw)
 	}
 
 	return nil

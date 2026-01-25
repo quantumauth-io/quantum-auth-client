@@ -9,7 +9,8 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/quantumauth-io/quantum-go-utils/qa_evm"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/txsender"
+	"github.com/quantumauth-io/quantum-go-utils/evm"
 )
 
 type ChainConfig struct {
@@ -21,7 +22,7 @@ type ChainConfig struct {
 
 type ChainClients struct {
 	WS   *ethclient.Client
-	HTTP qa_evm.BlockchainClient
+	HTTP evm.BlockchainClient
 }
 
 type ResolvedChain struct {
@@ -39,6 +40,25 @@ type ResolvedChain struct {
 type activeChain struct {
 	networkName string
 	clients     *ChainClients
+}
+
+type TxSenderNetworkResolver struct {
+	Svc *QAChainService
+}
+
+func (r TxSenderNetworkResolver) ResolveNetworkByChainID(chainID uint64) (*txsender.NetworkConfig, error) {
+	if r.Svc == nil {
+		return nil, errors.New("chains service is nil")
+	}
+
+	rc, err := r.Svc.ResolveNetworkByChainID(chainID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &txsender.NetworkConfig{
+		EntryPoint: rc.EntryPoint,
+	}, nil
 }
 
 type QAChainService struct {
@@ -76,7 +96,7 @@ func (s *QAChainService) Active() (*ChainClients, error) {
 	return current.clients, nil
 }
 
-func (s *QAChainService) ActiveHTTP(ctx context.Context) (qa_evm.BlockchainClient, error) {
+func (s *QAChainService) ActiveHTTP(ctx context.Context) (evm.BlockchainClient, error) {
 	_ = ctx // kept for future-proofing / symmetry
 
 	current := s.active.Load()

@@ -1,10 +1,10 @@
 package http
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -17,10 +17,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/chains"
-	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/wtypes"
+	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/devkeys"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/shared"
 )
 
@@ -124,27 +123,6 @@ func isTxHash(s string) bool {
 	return true
 }
 
-func applyBpsBuffer(gas uint64, bps uint64) uint64 {
-	return (gas * bps) / 10000
-}
-
-func weiToGweiString(wei *big.Int) string {
-	if wei == nil {
-		return "0"
-	}
-	div := big.NewInt(1_000_000_000)
-	q := new(big.Int).Quo(wei, div)
-	r := new(big.Int).Mod(wei, div)
-
-	r3 := new(big.Int).Mul(r, big.NewInt(1000))
-	r3.Quo(r3, div)
-
-	if r3.Sign() == 0 {
-		return q.String()
-	}
-	return fmt.Sprintf("%s.%03d", q.String(), r3.Int64())
-}
-
 // Converts a decimal-string wei amount into an ETH string, trimming to maxDecimals.
 func weiDecimalToEthString(weiDec string, maxDecimals int) string {
 	weiDec = strings.TrimSpace(weiDec)
@@ -201,118 +179,6 @@ func parseAddr(s string) (common.Address, error) {
 		return common.Address{}, fmt.Errorf("invalid address: %q", s)
 	}
 	return common.HexToAddress(s), nil
-}
-
-// personal_sign often sends message as hex bytes. If it isn't hex, treat as utf8.
-func parsePersonalSignMessage(msg string) ([]byte, error) {
-	m := strings.TrimSpace(msg)
-	if strings.HasPrefix(m, "0x") || strings.HasPrefix(m, "0X") {
-		return parseHexData(m)
-	}
-	return []byte(m), nil
-}
-
-func packU128Pair(low, high *big.Int) [32]byte {
-	// packs two uint128 into 32 bytes: (high << 128) | low
-	out := [32]byte{}
-	x := new(big.Int).Set(high)
-	x.Lsh(x, 128)
-	x.Or(x, new(big.Int).Set(low))
-	b := x.FillBytes(make([]byte, 32))
-	copy(out[:], b)
-	return out
-}
-
-func (s *Server) isAAAccount(addr common.Address) bool {
-	// pick the source of truth you already have
-	if s.onChain != nil {
-
-		AAAddress, err := s.onChain.ContractAddress()
-		if err != nil {
-			return false
-		}
-		return addr == AAAddress
-	}
-	// OR: from config
-	// if s.cfg.EthNetworks != nil { ... netCfg.AccountAddress ... }
-	return false
-}
-
-func (s *Server) resolveEIP1559Fees(ctx context.Context, req SendTxRequest) (*big.Int, *big.Int, error) {
-	// 🚨 GUARD: do NOT allow mixing legacy + EIP-1559
-	if req.Tx.GasPrice != "" &&
-		(req.Tx.MaxFeePerGas != "" || req.Tx.MaxPriorityFeePerGas != "") {
-		return nil, nil, fmt.Errorf(
-			"cannot mix gasPrice with maxFeePerGas/maxPriorityFeePerGas",
-		)
-	}
-
-	var (
-		maxFee = new(big.Int)
-		tip    = new(big.Int)
-	)
-
-	if req.Tx.MaxFeePerGas != "" && req.Tx.MaxFeePerGas != HexPrefix0x {
-		v, ok := new(big.Int).SetString(strings.TrimPrefix(req.Tx.MaxFeePerGas, HexPrefix0x), 16)
-		if !ok {
-			return nil, nil, fmt.Errorf("invalid maxFeePerGas")
-		}
-		maxFee = v
-	}
-	if req.Tx.MaxPriorityFeePerGas != "" && req.Tx.MaxPriorityFeePerGas != HexPrefix0x {
-		v, ok := new(big.Int).SetString(strings.TrimPrefix(req.Tx.MaxPriorityFeePerGas, HexPrefix0x), 16)
-		if !ok {
-			return nil, nil, fmt.Errorf("invalid maxPriorityFeePerGas")
-		}
-		tip = v
-	}
-
-	// If either missing, fill in from SuggestGasTipCap + Header.BaseFee
-	if tip.Sign() == 0 {
-		suggestedTip, err := s.httpChainClient.SuggestGasTipCap(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		tip = suggestedTip
-	}
-
-	if maxFee.Sign() == 0 {
-		hdr, err := s.httpChainClient.HeaderByNumber(ctx, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		baseFee := hdr.BaseFee
-		if baseFee == nil {
-			// fallback if baseFee missing
-			baseFee = big.NewInt(0)
-		}
-		// common heuristic: maxFee = 2*baseFee + tip
-		maxFee = new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tip)
-	}
-
-	return maxFee, tip, nil
-}
-
-func signEOATransaction(
-	ctx context.Context,
-	w wtypes.Wallet,
-	tx *types.Transaction,
-	chainID *big.Int,
-) (*types.Transaction, error) {
-
-	signer := types.LatestSignerForChainID(chainID)
-
-	// 1) Compute digest
-	digest := signer.Hash(tx)
-
-	// 2) Wallet signs digest
-	sig, err := w.SignHash(ctx, digest.Bytes())
-	if err != nil {
-		return nil, err
-	}
-
-	// 3) Inject signature
-	return tx.WithSignature(signer, sig)
 }
 
 func parseHexChainID(chainIDHex string) (*big.Int, error) {
@@ -422,6 +288,21 @@ func toChainsNetworkConfig(n shared.Network) (chains.NetworkConfig, error) {
 		EntryPoint: entryPoint,
 		RPCs:       rpcs,
 	}, nil
+}
+
+func devKeyHTTPStatus(err error) int {
+	switch {
+	case err == nil:
+		return http.StatusOK
+	case errors.Is(err, devkeys.ErrInvalidInput):
+		return http.StatusBadRequest
+	case errors.Is(err, devkeys.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, devkeys.ErrConflict):
+		return http.StatusConflict
+	default:
+		return http.StatusBadRequest
+	}
 }
 
 func debugQuantumAuthSig(userOpHash [32]byte, sigBlob []byte) (uint8, []byte, []byte, []byte, common.Address, error) {

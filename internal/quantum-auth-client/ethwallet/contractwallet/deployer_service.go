@@ -9,13 +9,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/ethwallet/wtypes"
 	"github.com/quantumauth-io/quantum-auth-client/internal/quantum-auth-client/helpers"
+	"github.com/quantumauth-io/quantum-go-utils/evm"
 	"github.com/quantumauth-io/quantum-go-utils/log"
-	"github.com/quantumauth-io/quantum-go-utils/qa_evm"
 )
 
 type ChainService interface {
 	SwitchChainByChainIDHex(ctx context.Context, chainIDHex string) (string, error)
-	ActiveHTTP(ctx context.Context) (qa_evm.BlockchainClient, error)
+	ActiveHTTP(ctx context.Context) (evm.BlockchainClient, error)
 }
 
 type ContractStore interface {
@@ -37,18 +37,14 @@ type DeployerConfig struct {
 }
 
 type AADeployResult struct {
-	ChainIDHex  string `json:"chainIdHex"`
-	NetworkName string `json:"networkName"`
-
-	EntryPoint common.Address `json:"entryPoint"`
-
+	ChainIDHex         string         `json:"chainIdHex"`
+	NetworkName        string         `json:"networkName"`
+	EntryPoint         common.Address `json:"entryPoint"`
 	TPMVerifierAddress common.Address `json:"tpmVerifierAddress"`
 	TPMVerifierTxHash  common.Hash    `json:"tpmVerifierTxHash"`
-
-	AccountAddress common.Address `json:"accountAddress"`
-	AccountTxHash  common.Hash    `json:"accountTxHash"`
-
-	AlreadyDeployed bool `json:"alreadyDeployed"`
+	AccountAddress     common.Address `json:"accountAddress"`
+	AccountTxHash      common.Hash    `json:"accountTxHash"`
+	AlreadyDeployed    bool           `json:"alreadyDeployed"`
 }
 
 type ContractDeployer struct {
@@ -57,10 +53,6 @@ type ContractDeployer struct {
 	wallets WalletProvider
 
 	entryPointByNetwork func(networkName string) (common.Address, error)
-}
-
-func (d *ContractDeployer) SetEntryPointResolver(fn func(string) (common.Address, error)) {
-	d.entryPointByNetwork = fn
 }
 
 func NewContractDeployer(cfg DeployerConfig) (*ContractDeployer, error) {
@@ -80,6 +72,10 @@ func NewContractDeployer(cfg DeployerConfig) (*ContractDeployer, error) {
 		wallets:             cfg.Wallets,
 		entryPointByNetwork: cfg.EntryPointByNetworkName,
 	}, nil
+}
+
+func (d *ContractDeployer) SetEntryPointResolver(fn func(string) (common.Address, error)) {
+	d.entryPointByNetwork = fn
 }
 
 func (d *ContractDeployer) DeployAAOnChainIDHex(ctx context.Context, chainIDHex string, recoveryAddress string) (*AADeployResult, error) {

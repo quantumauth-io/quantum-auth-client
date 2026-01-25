@@ -1,0 +1,549 @@
+[
+  {
+    "id": "app.title",
+    "translation": "QuantumAuth Client"
+  },
+  {
+    "id": "header.lock",
+    "translation": "Lock"
+  },
+  {
+    "id": "about.title",
+    "translation": "QuantumAuth Client {{.Version}}"
+  },
+  {
+    "id": "about.subtitle",
+    "translation": "Desktop GUI (Fyne)"
+  },
+  {
+    "id": "about.description",
+    "translation": "TPM + post-quantum signing runtime, challenge flows, and developer key management."
+  },
+  {
+    "id": "auth.button.show_keys",
+    "translation": "Show device public keys"
+  },
+  {
+    "id": "auth.status.keys_fetched",
+    "translation": "Keys fetched ✅ (see Logs tab)"
+  },
+  {
+    "id": "auth.status.error",
+    "translation": "Error: {{.Error}}"
+  },
+  {
+    "id": "auth.placeholder.hint",
+    "translation": "Wire your existing services client methods here."
+  },
+  {
+    "id": "common.create",
+    "translation": "Create"
+  },
+  {
+    "id": "common.cancel",
+    "translation": "Cancel"
+  },
+  {
+    "id": "common.delete",
+    "translation": "Delete"
+  },
+  {
+    "id": "common.copy",
+    "translation": "Copy"
+  },
+  {
+    "id": "common.error",
+    "translation": "Error"
+  },
+  {
+    "id": "common.loading",
+    "translation": "Loading…"
+  },
+  {
+    "id": "common.confirm",
+    "translation": "Confirm"
+  },
+  {
+    "id": "common.close",
+    "translation": "Close"
+  },
+  {
+    "id": "common.yes",
+    "translation": "Yes"
+  },
+  {
+    "id": "common.no",
+    "translation": "No"
+  },
+
+  {
+    "id": "devkeys.title",
+    "translation": "Developer Keys"
+  },
+  {
+    "id": "devkeys.create",
+    "translation": "Create new"
+  },
+  {
+    "id": "devkeys.unlock_required",
+    "translation": "Unlock the client to manage developer keys."
+  },
+  {
+    "id": "devkeys.unavailable",
+    "translation": "Developer keys are not available."
+  },
+  {
+    "id": "devkeys.load_failed",
+    "translation": "Failed to load developer keys."
+  },
+  {
+    "id": "devkeys.empty",
+    "translation": "No developer keys yet. Create one to get started."
+  },
+  {
+    "id": "devkeys.app_id",
+    "translation": "App ID"
+  },
+  {
+    "id": "devkeys.app_name",
+    "translation": "App Name"
+  },
+  {
+    "id": "devkeys.public_key",
+    "translation": "Public key"
+  },
+  {
+    "id": "devkeys.private_key",
+    "translation": "Private key"
+  },
+  {
+    "id": "devkeys.show_private",
+    "translation": "Show private key"
+  },
+  {
+    "id": "devkeys.hide_private",
+    "translation": "Hide private key"
+  },
+  {
+    "id": "devkeys.create_title",
+    "translation": "Create developer key"
+  },
+  {
+    "id": "devkeys.form.app_id_ph",
+    "translation": "uuid"
+  },
+  {
+    "id": "devkeys.form.app_name_ph",
+    "translation": "e.g. My App"
+  },
+  {
+    "id": "devkeys.delete_title",
+    "translation": "Delete developer key"
+  },
+  {
+    "id": "devkeys.delete_confirm_fmt",
+    "translation": "Delete \"{{.AppName}}\" ({{.AppID}})? This cannot be undone."
+  },
+  {
+    "id": "devkeys.err_conflict",
+    "translation": "A key already exists for this App ID."
+  },
+  {
+    "id": "devkeys.err_invalid",
+    "translation": "App ID and App Name are required."
+  },
+  {
+    "id": "devkeys.reveal_title",
+    "translation": "Show private key"
+  },
+  {
+    "id": "devkeys.reveal_confirm",
+    "translation": "Only do this in a safe place. Continue?"
+  },
+  {
+    "id": "common.loading",
+    "translation": "Loading…"
+  },
+
+  {
+    "id": "error.password_required",
+    "translation": "Password required"
+  },
+  {
+    "id": "error.password_mismatch",
+    "translation": "Passwords do not match"
+  },
+  {
+    "id": "lock.set_password.title",
+    "translation": "Set a password"
+  },
+  {
+    "id": "lock.set_password.subtitle",
+    "translation": "This password unlocks your local wallet and device keys."
+  },
+  {
+    "id": "lock.set_password.pw1",
+    "translation": "Create password (min 8 chars)"
+  },
+  {
+    "id": "lock.set_password.pw2",
+    "translation": "Confirm password"
+  },
+  {
+    "id": "lock.set_password.cta",
+    "translation": "Create & Unlock"
+  },
+  { "id": "lock.unlock.title", "translation": "Unlock QuantumAuth" },
+  { "id": "lock.unlock.password_placeholder", "translation": "Password" },
+  { "id": "lock.unlock.cta", "translation": "Unlock" },
+  {
+    "id": "lock.vault.error",
+    "translation": "Vault error: {{.Error}}"
+  },
+  {
+    "id": "logs.title",
+    "translation": "Logs"
+  },
+  {
+    "id": "settings.title",
+    "translation": "Settings"
+  },
+  {
+    "id": "settings.form.language",
+    "translation": "Language"
+  },
+  {
+    "id": "settings.form.qa_env",
+    "translation": "QA Environment"
+  },
+  {
+    "id": "settings.form.server_url",
+    "translation": "Server URL"
+  },
+  {
+    "id": "settings.form.local_host",
+    "translation": "Local host"
+  },
+  {
+    "id": "settings.form.port",
+    "translation": "Port"
+  },
+  {
+    "id": "settings.form.email",
+    "translation": "Email"
+  },
+  {
+    "id": "settings.form.device_label",
+    "translation": "Device label"
+  },
+  {
+    "id": "settings.form.infura_key",
+    "translation": "Infura API key"
+  },
+  {
+    "id": "settings.form.active_network",
+    "translation": "Active network"
+  },
+  {
+    "id": "settings.form.active_rpc",
+    "translation": "Active RPC"
+  },
+  {
+    "id": "settings.form.pq_label",
+    "translation": "Post-quantum label"
+  },
+  {
+    "id": "settings.form.tpm_owner_auth",
+    "translation": "TPM owner authorization"
+  },
+  {
+    "id": "settings.placeholder.server_url",
+    "translation": "https://api.quantumauth.io/quantum-auth/v1"
+  },
+  {
+    "id": "settings.placeholder.local_host",
+    "translation": "127.0.0.1"
+  },
+  {
+    "id": "settings.placeholder.port",
+    "translation": "6137"
+  },
+  {
+    "id": "settings.placeholder.email",
+    "translation": "Email"
+  },
+  {
+    "id": "settings.placeholder.device_label",
+    "translation": "default-device"
+  },
+  {
+    "id": "settings.placeholder.infura_key",
+    "translation": "Infura API key (optional)"
+  },
+  {
+    "id": "settings.placeholder.active_network",
+    "translation": "sepolia"
+  },
+  {
+    "id": "settings.placeholder.active_rpc",
+    "translation": "Infura"
+  },
+  {
+    "id": "settings.placeholder.tpm_owner_auth",
+    "translation": "(usually empty)"
+  },
+  {
+    "id": "settings.button.save",
+    "translation": "Save settings"
+  },
+  {
+    "id": "settings.button.init_runtime",
+    "translation": "Initialize runtime"
+  },
+  {
+    "id": "settings.status.saved",
+    "translation": "Saved ✅"
+  },
+  {
+    "id": "settings.status.save_failed",
+    "translation": "Save failed: {{.Error}}"
+  },
+  {
+    "id": "settings.status.initializing",
+    "translation": "Initializing..."
+  },
+  {
+    "id": "settings.status.runtime_ready",
+    "translation": "Runtime ready ✅"
+  },
+  {
+    "id": "settings.status.init_failed",
+    "translation": "Init failed: {{.Error}}"
+  },
+  {
+    "id": "setup.vault_not_loaded",
+    "translation": "Vault not loaded (unlock first)."
+  },
+  {
+    "id": "setup.title",
+    "translation": "Setup"
+  },
+  {
+    "id": "setup.intro",
+    "translation": "Complete the steps below. Only unfinished steps are shown."
+  },
+  {
+    "id": "setup.complete_title",
+    "translation": "Setup complete ✅"
+  },
+  {
+    "id": "setup.complete_hint",
+    "translation": "You can use the Wallet and Auth tabs."
+  },
+  {
+    "id": "setup.wallet.title",
+    "translation": "Create wallet"
+  },
+  {
+    "id": "setup.wallet.description",
+    "translation": "Creates your local non-custodial wallet + device wallet."
+  },
+  {
+    "id": "setup.wallet.button",
+    "translation": "Create wallet"
+  },
+  {
+    "id": "setup.wallet.creating",
+    "translation": "Creating wallet..."
+  },
+  {
+    "id": "setup.wallet.unlock_missing",
+    "translation": "Unlock password missing (lock/unlock again)."
+  },
+  {
+    "id": "setup.wallet.error",
+    "translation": "Wallet error: {{.Error}}"
+  },
+  {
+    "id": "setup.wallet.save_error",
+    "translation": "Save error: {{.Error}}"
+  },
+  {
+    "id": "setup.wallet.created",
+    "translation": "Wallet created ✅"
+  },
+  {
+    "id": "setup.register.title",
+    "translation": "Register on QA platform"
+  },
+  {
+    "id": "setup.register.help",
+    "translation": "Choose one option. We won’t try to detect whether an account exists."
+  },
+  {
+    "id": "setup.register.username_placeholder",
+    "translation": "Username"
+  },
+  {
+    "id": "setup.register.username_required",
+    "translation": "Username is required."
+  },
+  {
+    "id": "setup.register.email_placeholder",
+    "translation": "Email"
+  },
+  {
+    "id": "setup.register.device_label_placeholder",
+    "translation": "Device label"
+  },
+  {
+    "id": "setup.register.mode.new",
+    "translation": "Register new account"
+  },
+  {
+    "id": "setup.register.mode.add",
+    "translation": "Add this device to my account"
+  },
+  {
+    "id": "setup.register.default_mode",
+    "translation": "Register new account"
+  },
+  {
+    "id": "setup.register.continue",
+    "translation": "Continue"
+  },
+  {
+    "id": "setup.register.email_required",
+    "translation": "Email is required."
+  },
+  {
+    "id": "setup.register.registering",
+    "translation": "Registering..."
+  },
+  {
+    "id": "setup.register.failed",
+    "translation": "Registration failed: {{.Error}}"
+  },
+  {
+    "id": "setup.register.save_failed",
+    "translation": "Save failed: {{.Error}}"
+  },
+  {
+    "id": "setup.register.done",
+    "translation": "Registered ✅"
+  },
+  {
+    "id": "setup.pair.title",
+    "translation": "Pair the QA Bridge extension"
+  },
+  {
+    "id": "setup.pair.help",
+    "translation": "Generate a pairing token, then paste it into the QA Bridge extension."
+  },
+  {
+    "id": "setup.pair.token_placeholder",
+    "translation": "Click “Generate token”"
+  },
+  {
+    "id": "setup.pair.copy",
+    "translation": "Copy token"
+  },
+  {
+    "id": "setup.pair.no_token",
+    "translation": "No token to copy yet."
+  },
+  {
+    "id": "setup.pair.copied",
+    "translation": "Copied ✅"
+  },
+  {
+    "id": "setup.pair.generate",
+    "translation": "Generate token"
+  },
+  {
+    "id": "setup.pair.regenerate",
+    "translation": "Regenerate token"
+  },
+  {
+    "id": "setup.pair.generating",
+    "translation": "Generating..."
+  },
+  {
+    "id": "setup.pair.error",
+    "translation": "Error: {{.Error}}"
+  },
+  {
+    "id": "setup.pair.save_error",
+    "translation": "Save error: {{.Error}}"
+  },
+  {
+    "id": "setup.pair.generated",
+    "translation": "Token generated ✅"
+  },
+  {
+    "id": "tabs.setup",
+    "translation": "Setup"
+  },
+  {
+    "id": "tabs.settings",
+    "translation": "Settings"
+  },
+  {
+    "id": "tabs.auth",
+    "translation": "Auth"
+  },
+  {
+    "id": "tabs.devkeys",
+    "translation": "DevKeys"
+  },
+  {
+    "id": "tabs.logs",
+    "translation": "Logs"
+  },
+  {
+    "id": "tabs.about",
+    "translation": "About"
+  },
+  {
+    "id": "tabs.wallet",
+    "translation": "Wallet"
+  },
+  { "id": "wallet.network.label", "translation": "Network" },
+  { "id": "wallet.network.fallback_chain", "translation": "Chain" },
+  { "id": "wallet.network.active_none", "translation": "Active: (none)" },
+  { "id": "wallet.network.active_prefix", "translation": "Active: " },
+  { "id": "wallet.network.active_fmt", "translation": "Active: {{.network}} (chainId={{.chainId}} rpc={{.rpc}})" },
+
+  { "id": "wallet.unlock_required", "translation": "Unlock required to access wallets." },
+  { "id": "wallet.runtime_error", "translation": "Wallet runtime error (see logs)." },
+  { "id": "wallet.web3_error", "translation": "Web3 runtime error (see logs)." },
+  { "id": "wallet.web3_not_ready", "translation": "Web3 runtime not ready." },
+  { "id": "wallet.wallets_not_ready", "translation": "Wallets not ready." },
+
+  { "id": "wallet.user.title", "translation": "User Wallet (EOA)" },
+  { "id": "wallet.device.title", "translation": "Device Wallet (TPM)" },
+  { "id": "wallet.contract.title", "translation": "Contract Wallet (AA)" },
+
+  { "id": "wallet.address.label", "translation": "Address" },
+  { "id": "wallet.copy_btn", "translation": "Copy" },
+
+  { "id": "wallet.balance_loading", "translation": "Balance: …" },
+  { "id": "wallet.balance_no_active_network", "translation": "Balance: (no active network)" },
+  { "id": "wallet.balance_error", "translation": "Balance: error" },
+  { "id": "wallet.balance_fmt", "translation": "Balance: {{.amount}} ETH" },
+
+  { "id": "wallet.contract.account", "translation": "Account" },
+  { "id": "wallet.contract.status_configured", "translation": "Status: configured" },
+  { "id": "wallet.contract.status_not_configured", "translation": "Status: not configured" },
+  { "id": "wallet.contract.status_error", "translation": "Status: error" },
+  { "id": "wallet.contract.validate_chain", "translation": "Validate chain" },
+
+  { "id": "wallet.contract.recovery_placeholder", "translation": "Recovery EOA address (0x...)" },
+  { "id": "wallet.contract.network_loading", "translation": "Network: (loading…)" },
+  { "id": "wallet.contract.network_prefix", "translation": "Network: " },
+  { "id": "wallet.contract.network_none", "translation": "Network: (none)" },
+
+  { "id": "wallet.contract.deploy_btn", "translation": "Deploy AA account" },
+  { "id": "wallet.contract.deploy_hint", "translation": "Deploy the AA account on the currently selected network." }
+
+]
